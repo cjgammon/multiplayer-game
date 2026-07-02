@@ -7,7 +7,8 @@ import {
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y,
   stepCharacter,
 } from "./shared.js";
-import { TILE, getMap, buildMapData, worldSize } from "./maps.js";
+import { TILE, TEAM_A, TEAM_B, TEAM_COLORS, getMap, buildMapData, worldSize } from "./maps.js";
+import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
 
 // A handful of distinguishable tints, cycling for more than 4 players.
 const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];
@@ -63,6 +64,62 @@ const game = new ServerGame(
       ),
   },
 );
+
+// Drives Minion waves and same-Lane combat, independent of any connection —
+// see acceptance criteria on #4 ("no player input required"). Not net.spawn'd
+// itself (no visual representation to sync); added ahead of any Minion so its
+// fixedUpdate (combat resolution, then spawning) always runs before theirs
+// within the same tick, letting a Minion's own fixedUpdate see this tick's
+// `engaged` flag the moment it's set.
+class MinionDirector extends Entity {
+  constructor(game) {
+    super();
+    this.game = game;
+    // One spawn countdown per [laneIndex][team], seeded at 0 so the first
+    // wave on each Lane appears immediately rather than after a full wait.
+    this.timers = map.lanes.map(() => [0, 0]);
+  }
+
+  fixedUpdate(dt) {
+    this._resolveCombat();
+    this._spawnWaves(dt);
+  }
+
+  // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
+  // (see maps.js's twinLanes) can put different Lanes' Minions in physical
+  // overlap, so laneIndex is checked (via canEngage) in addition to the AABB
+  // test itself.
+  _resolveCombat() {
+    this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
+      if (!canEngage(a, b)) return;
+      const { aDied, bDied } = resolveMinionCombat(a, b);
+      if (aDied) this.game.net.despawn(a.netId);
+      if (bDied) this.game.net.despawn(b.netId);
+    });
+  }
+
+  _spawnWaves(dt) {
+    map.lanes.forEach((lane, laneIndex) => {
+      for (const team of [TEAM_A, TEAM_B]) {
+        const remaining = this.timers[laneIndex][team] - dt;
+        if (remaining <= 0) {
+          this.timers[laneIndex][team] = remaining + MINION_SPAWN_INTERVAL;
+          this._spawn(lane, laneIndex, team);
+        } else {
+          this.timers[laneIndex][team] = remaining;
+        }
+      }
+    });
+  }
+
+  _spawn(lane, laneIndex, team) {
+    const [start, ...ahead] = laneWaypoints(lane, team);
+    const minion = new Minion(start.x, start.y, team, laneIndex, ahead, TEAM_COLORS[team]);
+    minion.netId = this.game.net.spawn("minion", minion);
+  }
+}
+
+game.scene.add(new MinionDirector(game));
 
 const ws = new WebSocketServer();
 ws.onConnection.add((conn) => game.accept(new ServerTransport(conn)));

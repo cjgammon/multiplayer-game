@@ -14,6 +14,7 @@ import {
   stepCharacter,
 } from "./shared.js";
 import { TILE, getMap, buildMapData, worldSize, TEAM_COLORS, TOWER_COLOR } from "./maps.js";
+import { MINION_W, MINION_H } from "./minions.js";
 
 const canvas = document.getElementById("view");
 
@@ -79,8 +80,26 @@ async function main() {
     }
   }
 
+  // Untextured Sprite → renders as a solid tinted box, same as CharacterView.
+  // Not predicted (no player drives a Minion) — NetClient interpolates it
+  // like any other remote entity, from the position the server broadcasts.
+  class MinionView extends Sprite {
+    constructor() {
+      super();
+      this.width = MINION_W;
+      this.height = MINION_H;
+    }
+
+    // Reads the payload the server's Minion.netState() sends.
+    applyNetState(state) {
+      if (!state) return;
+      if (state.color !== undefined) this.tint = state.color;
+    }
+  }
+
   const factory = createEntityFactory({
     character: () => new CharacterView(),
+    minion: () => new MinionView(),
   });
 
   class WorldScene extends NetScene {
