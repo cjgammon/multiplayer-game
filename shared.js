@@ -1,18 +1,13 @@
-// shared.js — constants, map data, and the one movement function both the
-// server (real simulation) and the client (local prediction + reconciliation
-// replay) call. Both sides must build an identical Tilemap from
-// `buildMapData()`; the map is static and known at build time, so it isn't
+// shared.js — constants and the one movement function both the server (real
+// simulation) and the client (local prediction + reconciliation replay)
+// call. Map data itself (Lanes, Bases, Towers, Tilemap grid) lives in
+// maps.js — see its header comment for why it's shared/local rather than
 // networked.
 import { Entity } from "@cjgammon/gamekit";
+import { TILE } from "./maps.js";
 
 export const TICK_RATE = 20; // fixed ticks/sec, server and client
 export const PORT = 39500; // WebSocket port, server and client
-
-export const TILE = 16;
-export const MAP_COLS = 40;
-export const MAP_ROWS = 16;
-export const WORLD_W = MAP_COLS * TILE; // 640
-export const WORLD_H = MAP_ROWS * TILE; // 256
 
 export const CHAR_W = 14;
 export const CHAR_H = 20;
@@ -26,19 +21,6 @@ export const GRAVITY = 900;
 export const JUMP_VELOCITY = 340;
 
 export const SPAWN_Y = TILE * 2;
-
-/** An empty arena: solid floor + side walls, nothing else. */
-export function buildMapData() {
-  const data = new Array(MAP_COLS * MAP_ROWS).fill(0);
-  for (let col = 0; col < MAP_COLS; col++) {
-    data[(MAP_ROWS - 1) * MAP_COLS + col] = 1; // floor
-  }
-  for (let row = 0; row < MAP_ROWS; row++) {
-    data[row * MAP_COLS] = 1; // left wall
-    data[row * MAP_COLS + MAP_COLS - 1] = 1; // right wall
-  }
-  return data;
-}
 
 function isGrounded(entity, tilemap) {
   const footY = entity.y + entity.height + 1;

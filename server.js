@@ -3,15 +3,21 @@
 import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-server";
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
-  TICK_RATE, PORT, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
+  TICK_RATE, PORT,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y,
-  buildMapData, stepCharacter,
+  stepCharacter,
 } from "./shared.js";
+import { TILE, getMap, buildMapData, worldSize } from "./maps.js";
 
 // A handful of distinguishable tints, cycling for more than 4 players.
 const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];
 
-const tilemap = new Tilemap(MAP_COLS, MAP_ROWS, TILE, TILE, buildMapData());
+// Selects which Map to run — the client must be pointed at the same one
+// (its `?map=` query param) since both sides build the Tilemap locally.
+const map = getMap(process.env.MAP_ID || "singleLane");
+const { width: WORLD_W, height: WORLD_H } = worldSize(map);
+
+const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
 
 class Character extends Entity {
   // The server sets this from the client's latest input each tick.

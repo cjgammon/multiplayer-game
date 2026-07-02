@@ -9,10 +9,11 @@ import {
   mountUnsupportedNotice,
 } from "@cjgammon/gamekit/renderer";
 import {
-  TICK_RATE, PORT, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
+  TICK_RATE, PORT,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y,
-  buildMapData, stepCharacter,
+  stepCharacter,
 } from "./shared.js";
+import { TILE, getMap, buildMapData, worldSize, TEAM_COLORS, TOWER_COLOR } from "./maps.js";
 
 const canvas = document.getElementById("view");
 
@@ -23,11 +24,35 @@ if (!isWebGPUAvailable()) {
 }
 
 async function main() {
+  // Selects which Map to render — must match the server's MAP_ID env var
+  // (both build the Tilemap locally from the same data; see maps.js).
+  const mapId = new URLSearchParams(location.search).get("map") || "singleLane";
+  const map = getMap(mapId);
+  const { width: WORLD_W, height: WORLD_H } = worldSize(map);
+
   // Built locally from the same shared data the server uses — the map is
   // static, so it isn't sent over the wire; both sides must agree on it byte
   // for byte or client-side collision (prediction + collide) would diverge.
-  const tilemap = new Tilemap(MAP_COLS, MAP_ROWS, TILE, TILE, buildMapData());
+  const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
   tilemap.tint = 0x445566;
+
+  // Bases and Towers are static placeholder shapes (no art pipeline yet, no
+  // HP/combat yet) — like the Tilemap, both sides can derive their positions
+  // identically from Map data, so they're built locally rather than synced.
+  function shape(def, tint) {
+    const e = new Sprite();
+    e.x = def.x;
+    e.y = def.y;
+    e.width = def.w;
+    e.height = def.h;
+    e.tint = tint;
+    return e;
+  }
+
+  const staticEntities = [
+    ...map.bases.map((b) => shape(b, TEAM_COLORS[b.team])),
+    ...map.lanes.map((lane) => shape(lane.tower, TOWER_COLOR)),
+  ];
 
   // Untextured Sprite → renders as a solid tinted box (no art pipeline yet).
   // Config (size/drag/maxVelocity) must match the server's Character exactly
@@ -61,6 +86,7 @@ async function main() {
   class WorldScene extends NetScene {
     create() {
       this.add(tilemap);
+      for (const entity of staticEntities) this.add(entity);
       this.camera.bounds = { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H };
     }
 
