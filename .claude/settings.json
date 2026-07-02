@@ -1,0 +1,5 @@
+{
+  "env": {
+    "WT_DEV_CMD": "scripts/wt-dev.sh"
+  }
+}
