@@ -1,0 +1,21 @@
+{
+  "name": "multiplayer-game",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"node server.js\" \"vite\"",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@cjgammon/gamekit": "^0.1.1",
+    "@cjgammon/gamekit-server": "^0.1.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "vite": "^5.4.21"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
