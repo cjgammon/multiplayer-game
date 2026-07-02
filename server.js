@@ -3,12 +3,10 @@
 import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-server";
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
-  TICK_RATE, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
+  TICK_RATE, PORT, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y,
   buildMapData, stepCharacter,
 } from "./shared.js";
-
-const PORT = 39500;
 
 // A handful of distinguishable tints, cycling for more than 4 players.
 const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];

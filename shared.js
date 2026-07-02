@@ -6,6 +6,7 @@
 import { Entity } from "@cjgammon/gamekit";
 
 export const TICK_RATE = 20; // fixed ticks/sec, server and client
+export const PORT = 39500; // WebSocket port, server and client
 
 export const TILE = 16;
 export const MAP_COLS = 40;

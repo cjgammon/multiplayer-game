@@ -9,12 +9,11 @@ import {
   mountUnsupportedNotice,
 } from "@cjgammon/gamekit/renderer";
 import {
-  TICK_RATE, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
+  TICK_RATE, PORT, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y,
   buildMapData, stepCharacter,
 } from "./shared.js";
 
-const PORT = 39500;
 const canvas = document.getElementById("view");
 
 if (!isWebGPUAvailable()) {
