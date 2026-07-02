@@ -7,7 +7,15 @@ import { Entity } from "@cjgammon/gamekit";
 import { TILE } from "./maps.js";
 
 export const TICK_RATE = 20; // fixed ticks/sec, server and client
-export const PORT = 39500; // WebSocket port, server and client
+
+// WebSocket port, server and client. Overridable so multiple git worktrees
+// (see wt-preview) can each run their own server without colliding on
+// 39500 — server.js reads it from process.env.PORT, client.js (bundled by
+// Vite) from import.meta.env.VITE_WS_PORT.
+const envPort =
+  (typeof process !== "undefined" && process.env && process.env.PORT) ||
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_WS_PORT);
+export const PORT = Number(envPort) || 39500;
 
 export const CHAR_W = 14;
 export const CHAR_H = 20;
