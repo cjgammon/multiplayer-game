@@ -32,21 +32,14 @@ class Character extends Entity {
   }
 
   // Per-entity payload the client reads via CharacterView.applyNetState.
-  // Besides color, this carries the Character's kinematic state: NetClient's
-  // reconciliation resets the local entity to the snapshot's x/y and replays
-  // unacked inputs, but snapshots don't include velocity — replaying gravity
-  // from a stale velocity.y (and stale _grounded/_prevJump) lands pixels off
-  // every snapshot, which reads as constant stutter during jumps. The client
-  // restores these in applyNetState (delivered before the replay) so the
-  // replay starts from the exact server state.
+  // Besides color, this carries grounded/prevJump: gamekit 0.2.0 restores
+  // velocity automatically before reconciliation replay (SnapshotEntity now
+  // carries vx/vy), but grounded/prevJump are app-specific jump-edge state
+  // the engine doesn't know about — stale values here let a replayed tick
+  // re-fire or drop a jump. applyNetState is guaranteed to run before the
+  // replay (see SimulateFn's doc comment in gamekit).
   netState() {
-    return {
-      color: this.color,
-      vx: this.velocity.x,
-      vy: this.velocity.y,
-      grounded: this._grounded,
-      prevJump: this._prevJump,
-    };
+    return { color: this.color, grounded: this._grounded, prevJump: this._prevJump };
   }
 }
 

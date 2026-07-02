@@ -8,8 +8,8 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@cjgammon/gamekit": "^0.1.1",
-    "@cjgammon/gamekit-server": "^0.1.1"
+    "@cjgammon/gamekit": "^0.2.0",
+    "@cjgammon/gamekit-server": "^0.2.0"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
