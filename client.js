@@ -41,9 +41,20 @@ async function main() {
       this.maxVelocity.set(MAX_VEL_X, MAX_VEL_Y);
     }
 
-    // Reads the {color} payload the server's Character.netState() sends.
+    // Reads the payload the server's Character.netState() sends. Restoring
+    // velocity/_grounded/_prevJump here matters for the LOCAL Character:
+    // NetClient delivers this payload just before _reconcileLocal resets
+    // x/y to the snapshot and replays unacked inputs — without it the replay
+    // integrates gravity from a velocity K ticks ahead of the auth state,
+    // popping the character a few pixels on every snapshot during a jump.
+    // For remote Characters the kinematic fields are inert (they're passive
+    // and interpolated), but color applies to everyone.
     applyNetState(state) {
-      if (state && state.color !== undefined) this.tint = state.color;
+      if (!state) return;
+      if (state.color !== undefined) this.tint = state.color;
+      if (state.vx !== undefined) this.velocity.set(state.vx, state.vy);
+      if (state.grounded !== undefined) this._grounded = state.grounded;
+      if (state.prevJump !== undefined) this._prevJump = state.prevJump;
     }
   }
 
@@ -57,12 +68,39 @@ async function main() {
       this.camera.bounds = { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H };
     }
 
+    // NetScene's own fixedUpdate calls super.fixedUpdate() — which advances
+    // the camera via Camera.update() — BEFORE client.predict() moves the
+    // local Character for this tick. That leaves the camera always one tick
+    // behind the Character it's following: imperceptible for slow, steady
+    // horizontal motion, but visible as jitter during a jump's large,
+    // fast-changing vertical velocity. Reproduce Scene.fixedUpdate's steps
+    // here with predict() moved before the camera follows, so it tracks
+    // this tick's freshly predicted position instead of last tick's.
+    fixedUpdate(dt) {
+      this.root.syncPrev();
+      this.root.fixedUpdate(dt);
+      this.client.predict();
+      this.camera.update(dt);
+      this.hud.syncPrev();
+      this.hud.fixedUpdate(dt);
+    }
+
     update(dt) {
       super.update(dt);
       // Start following the local Character as soon as it's spawned.
       if (!this._following) {
         const local = this.client.entities.get(this.client.you);
         if (local) {
+          // NetClient spawns every entity with interpolate = false, assuming
+          // the net layer already smooths it — true for remotes (a fresh
+          // position every render frame from the Interpolator), but not for
+          // the local entity: prediction only advances once per fixed tick
+          // (TICK_RATE, 20Hz), well below render rate, so without this it's
+          // drawn at a static position for ~3 frames then jumps — visible as
+          // stutter, worst on the large per-tick position deltas of a jump.
+          // Turning interpolate back on lerps prevX/Y -> x/y across render
+          // frames, same as any single-player Entity.
+          local.interpolate = true;
           this.camera.follow(local, 0.2);
           this.camera.snapToTarget();
           this._following = true;
