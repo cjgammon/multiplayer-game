@@ -9,6 +9,7 @@ import {
 } from "./shared.js";
 import { TILE, TEAM_A, TEAM_B, TEAM_COLORS, getMap, buildMapData, worldSize } from "./maps.js";
 import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
+import { Tower, Base, canEngageTower, canEngageBase, resolveStructureDamage } from "./structures.js";
 
 // A handful of distinguishable tints, cycling for more than 4 players.
 const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];
@@ -78,24 +79,81 @@ class MinionDirector extends Entity {
     // One spawn countdown per [laneIndex][team], seeded at 0 so the first
     // wave on each Lane appears immediately rather than after a full wait.
     this.timers = map.lanes.map(() => [0, 0]);
+    // Tracked directly (rather than queried from the scene) so structure
+    // gating can walk "this Minion's own Lane's Tower" in O(1) — see
+    // _resolveStructureDamage.
+    this.minions = [];
+    // Set once a Base's core is destroyed — freezes further combat/spawning
+    // (see fixedUpdate) so the Match stops in place instead of continuing
+    // past the losing Team's Base falling.
+    this.winner = null;
+
+    this.towers = map.lanes.map((lane, laneIndex) => {
+      const t = lane.tower;
+      const tower = new Tower(t.x, t.y, t.w, t.h, laneIndex);
+      tower.netId = this.game.net.spawn("tower", tower);
+      return tower;
+    });
+
+    this.bases = map.bases.map((b) => {
+      const base = new Base(b.x, b.y, b.w, b.h, b.team);
+      base.netId = this.game.net.spawn("base", base);
+      return base;
+    });
   }
 
   fixedUpdate(dt) {
+    if (this.winner !== null) return; // Match over.
     this._resolveCombat();
     this._spawnWaves(dt);
+  }
+
+  _resolveCombat() {
+    this._resolveMinionCombat();
+    this._resolveStructureDamage();
   }
 
   // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
   // (see maps.js's twinLanes) can put different Lanes' Minions in physical
   // overlap, so laneIndex is checked (via canEngage) in addition to the AABB
   // test itself.
-  _resolveCombat() {
+  _resolveMinionCombat() {
     this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
       if (!canEngage(a, b)) return;
       const { aDied, bDied } = resolveMinionCombat(a, b);
-      if (aDied) this.game.net.despawn(a.netId);
-      if (bDied) this.game.net.despawn(b.netId);
+      if (aDied) this._killMinion(a);
+      if (bDied) this._killMinion(b);
     });
+  }
+
+  // Minion-vs-Tower/Base engagement isn't detected by scene.overlap's full
+  // AABB test (Tower/Base sit beside the Lane, not literally under a
+  // Minion's walking height — see structures.js's xOverlap), so each live
+  // Minion is checked directly against its own Lane's Tower, and — once that
+  // Tower is destroyed — the enemy Base. Blocked at a live Tower this tick
+  // means the Base is out of physical reach, gating per-Lane rather than
+  // globally (a Minion never reaches another Lane's Base check at all).
+  _resolveStructureDamage() {
+    for (const minion of this.minions) {
+      if (minion.hp <= 0) continue;
+      const tower = this.towers[minion.laneIndex];
+      if (canEngageTower(minion, tower)) {
+        const { destroyed } = resolveStructureDamage(minion, tower);
+        if (destroyed) this.game.net.despawn(tower.netId);
+        continue;
+      }
+      if (tower.hp > 0) continue;
+      for (const base of this.bases) {
+        if (!canEngageBase(minion, base)) continue;
+        const { destroyed } = resolveStructureDamage(minion, base);
+        if (destroyed) this._endMatch(base.team);
+      }
+    }
+  }
+
+  _endMatch(losingTeam) {
+    this.winner = losingTeam === TEAM_A ? TEAM_B : TEAM_A;
+    this.game.net.setState({ winner: this.winner });
   }
 
   _spawnWaves(dt) {
@@ -116,6 +174,13 @@ class MinionDirector extends Entity {
     const [start, ...ahead] = laneWaypoints(lane, team);
     const minion = new Minion(start.x, start.y, team, laneIndex, ahead, TEAM_COLORS[team]);
     minion.netId = this.game.net.spawn("minion", minion);
+    this.minions.push(minion);
+  }
+
+  _killMinion(minion) {
+    this.game.net.despawn(minion.netId);
+    const index = this.minions.indexOf(minion);
+    if (index !== -1) this.minions.splice(index, 1);
   }
 }
 

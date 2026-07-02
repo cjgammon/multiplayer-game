@@ -13,7 +13,9 @@ import {
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y,
   stepCharacter,
 } from "./shared.js";
-import { TILE, getMap, buildMapData, worldSize, TEAM_COLORS, TOWER_COLOR } from "./maps.js";
+import {
+  TILE, getMap, buildMapData, worldSize, TEAM_A, TEAM_B, TEAM_COLORS, TOWER_COLOR, TOWER_SIZE, BASE_SIZE,
+} from "./maps.js";
 import { MINION_W, MINION_H } from "./minions.js";
 
 const canvas = document.getElementById("view");
@@ -36,24 +38,6 @@ async function main() {
   // for byte or client-side collision (prediction + collide) would diverge.
   const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
   tilemap.tint = 0x445566;
-
-  // Bases and Towers are static placeholder shapes (no art pipeline yet, no
-  // HP/combat yet) — like the Tilemap, both sides can derive their positions
-  // identically from Map data, so they're built locally rather than synced.
-  function shape(def, tint) {
-    const e = new Sprite();
-    e.x = def.x;
-    e.y = def.y;
-    e.width = def.w;
-    e.height = def.h;
-    e.tint = tint;
-    return e;
-  }
-
-  const staticEntities = [
-    ...map.bases.map((b) => shape(b, TEAM_COLORS[b.team])),
-    ...map.lanes.map((lane) => shape(lane.tower, TOWER_COLOR)),
-  ];
 
   // Untextured Sprite → renders as a solid tinted box (no art pipeline yet).
   // Config (size/drag/maxVelocity) must match the server's Character exactly
@@ -97,15 +81,43 @@ async function main() {
     }
   }
 
+  // Bases and Towers are now server-authoritative net.spawn entities (see
+  // structures.js and server.js's MinionDirector) — HP/destruction lives
+  // there, so the client just renders whatever position/state the server
+  // sends, same as Minion.
+  class TowerView extends Sprite {
+    constructor() {
+      super();
+      this.width = TOWER_SIZE;
+      this.height = TOWER_SIZE;
+      this.tint = TOWER_COLOR;
+    }
+  }
+
+  class BaseView extends Sprite {
+    constructor() {
+      super();
+      this.width = BASE_SIZE;
+      this.height = BASE_SIZE;
+    }
+
+    // Reads the payload the server's Base.netState() sends.
+    applyNetState(state) {
+      if (!state) return;
+      if (state.team !== undefined) this.tint = TEAM_COLORS[state.team];
+    }
+  }
+
   const factory = createEntityFactory({
     character: () => new CharacterView(),
     minion: () => new MinionView(),
+    tower: () => new TowerView(),
+    base: () => new BaseView(),
   });
 
   class WorldScene extends NetScene {
     create() {
       this.add(tilemap);
-      for (const entity of staticEntities) this.add(entity);
       this.camera.bounds = { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H };
     }
 
@@ -152,4 +164,16 @@ async function main() {
   }
   window.addEventListener("keydown", (e) => setKey(e, true));
   window.addEventListener("keyup", (e) => setKey(e, false));
+
+  // Match end: the server sets {winner} via net.setState once a Base is
+  // destroyed (see server.js's MinionDirector._endMatch) — surfaced here
+  // since it's the only observable sign the Match is over (no HUD/text
+  // rendering pipeline yet).
+  const winnerEl = document.getElementById("winner");
+  const TEAM_NAMES = { [TEAM_A]: "Team A", [TEAM_B]: "Team B" };
+  scene.client.onState.add((state) => {
+    if (!state || state.winner === undefined) return;
+    winnerEl.textContent = `${TEAM_NAMES[state.winner]} wins!`;
+    winnerEl.style.display = "block";
+  });
 }
