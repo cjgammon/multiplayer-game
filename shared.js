@@ -27,6 +27,13 @@ export const JUMP_VELOCITY = 340;
 
 export const SPAWN_Y = TILE * 2;
 
+// Lobby: the two Teams a player can join, and the Character roster a player
+// can pick from. Only one Character exists so far (from #1); later slices
+// (#8) add entries here without changing the lobby/select flow's shape.
+export const TEAMS = ["A", "B"];
+export const TEAM_COLORS = { A: 0xe8543e, B: 0x3ea1e8 };
+export const CHARACTERS = [{ id: "naut", name: "Naut" }];
+
 /** An empty arena: solid floor + side walls, nothing else. */
 export function buildMapData() {
   const data = new Array(MAP_COLS * MAP_ROWS).fill(0);
