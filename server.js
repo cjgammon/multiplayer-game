@@ -8,7 +8,7 @@ import {
   stepCharacter,
 } from "./shared.js";
 import { TILE, TEAM_A, TEAM_B, TEAM_COLORS, getMap, buildMapData, worldSize } from "./maps.js";
-import { Minion, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
+import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
 
 // A handful of distinguishable tints, cycling for more than 4 players.
 const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];
@@ -87,11 +87,11 @@ class MinionDirector extends Entity {
 
   // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
   // (see maps.js's twinLanes) can put different Lanes' Minions in physical
-  // overlap, so laneIndex is checked in addition to the AABB test itself.
+  // overlap, so laneIndex is checked (via canEngage) in addition to the AABB
+  // test itself.
   _resolveCombat() {
     this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
-      if (!(a instanceof Minion) || !(b instanceof Minion)) return;
-      if (a.team === b.team || a.laneIndex !== b.laneIndex) return;
+      if (!canEngage(a, b)) return;
       const { aDied, bDied } = resolveMinionCombat(a, b);
       if (aDied) this.game.net.despawn(a.netId);
       if (bDied) this.game.net.despawn(b.netId);

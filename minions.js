@@ -82,12 +82,32 @@ export class Minion extends Entity {
 }
 
 /**
+ * Whether two overlapping entities should fight: both Minions, same Lane,
+ * opposing Teams, and both still alive this tick. The `hp > 0` check matters
+ * because `scene.overlap` snapshots its candidate list once per call — if a
+ * third same-Lane Minion overlaps a pair whose fight already killed one side
+ * earlier in the same pass, the dead one hasn't been despawned yet and would
+ * otherwise still land a hit (see MinionDirector._resolveCombat in
+ * server.js, which calls this before resolveMinionCombat).
+ */
+export function canEngage(a, b) {
+  return (
+    a instanceof Minion &&
+    b instanceof Minion &&
+    a.hp > 0 &&
+    b.hp > 0 &&
+    a.team !== b.team &&
+    a.laneIndex === b.laneIndex
+  );
+}
+
+/**
  * Resolve one tick of combat between two Minions the caller has already
- * confirmed are overlapping, same-Lane, and opposing-Team (see
- * MinionDirector._resolveCombat in server.js, which owns that filtering so
- * this stays a pure, easily-tested function). Each attacks if its cooldown
- * has elapsed, marks both `engaged`, and reports which (if either) died so
- * the caller can despawn them via `net.despawn`.
+ * confirmed are eligible via `canEngage` (see server.js's
+ * MinionDirector._resolveCombat, which owns that filtering so this stays a
+ * pure, easily-tested function). Each attacks if its cooldown has elapsed,
+ * marks both `engaged`, and reports which (if either) died so the caller can
+ * despawn them via `net.despawn`.
  */
 export function resolveMinionCombat(a, b) {
   a.engaged = true;
