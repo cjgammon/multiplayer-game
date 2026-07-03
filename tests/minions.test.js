@@ -1,23 +1,27 @@
 import { describe, test, expect } from "vitest";
-import { getMap, TILE, TEAM_A, TEAM_B } from "../maps.js";
+import { getMap } from "../maps.js";
+import { TILE, TEAMS } from "../shared.js";
 import {
   Minion,
   canEngage,
   resolveMinionCombat,
   laneWaypoints,
+  MINION_H,
   MINION_HP,
   MINION_DAMAGE,
   MINION_ATTACK_INTERVAL,
   MINION_SPEED,
 } from "../minions.js";
 
+const [TEAM_A, TEAM_B] = TEAMS;
+
 describe("laneWaypoints", () => {
   const lane = getMap("singleLane").lanes[0];
 
-  test("Team A walks the Lane's points in order, Base toward enemy Base", () => {
+  test("Team A walks the Lane's points in order, feet resting on the floor tile", () => {
     const points = lane.points;
     expect(laneWaypoints(lane, TEAM_A)).toEqual(
-      points.map((p) => ({ x: p.x * TILE, y: p.y * TILE })),
+      points.map((p) => ({ x: p.x * TILE, y: p.y * TILE - MINION_H })),
     );
   });
 

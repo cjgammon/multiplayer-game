@@ -11,6 +11,8 @@
         align-items: center;
         justify-content: center;
         background: #111;
+        font: 14px system-ui, sans-serif;
+        color: #ddd;
       }
       #view { width: 960px; height: 384px; display: block; background: #000; }
       #hint {
@@ -22,11 +24,43 @@
         text-align: center; color: #fff; font: bold 28px system-ui, sans-serif;
         display: none;
       }
+
+      #lobby { width: 360px; }
+      #lobby button { cursor: pointer; }
+      #lobby button[aria-pressed="true"] { outline: 2px solid #4bd17c; }
+      #landing { display: flex; flex-direction: column; gap: 12px; }
+      #join-row { display: flex; gap: 8px; }
+      #join-code { flex: 1; text-transform: uppercase; }
+
+      #room-code { font-size: 1.4em; letter-spacing: 0.15em; }
+      #player-list { list-style: none; margin: 0; padding: 0; }
+      #player-list li { padding: 4px 0; border-bottom: 1px solid #333; }
+      #player-list li.you { color: #4bd17c; }
+      .picker { display: flex; gap: 8px; margin: 8px 0; }
+      #ready-toggle { margin-top: 12px; }
     </style>
   </head>
   <body>
-    <canvas id="view"></canvas>
-    <div id="hint">Arrows/WASD to move, Up/W/Space to jump &middot; open a second window to see it synced</div>
+    <div id="lobby">
+      <div id="landing">
+        <button id="create-room">Create Room</button>
+        <div id="join-row">
+          <input id="join-code" placeholder="Room code" maxlength="4" />
+          <button id="join-room">Join Room</button>
+        </div>
+        <p id="landing-error" role="alert"></p>
+      </div>
+      <div id="room" hidden>
+        <p>Room code: <strong id="room-code"></strong></p>
+        <ul id="player-list"></ul>
+        <div id="team-picker" class="picker"></div>
+        <div id="character-picker" class="picker"></div>
+        <button id="ready-toggle" disabled>Ready</button>
+        <p id="room-error" role="alert"></p>
+      </div>
+    </div>
+    <canvas id="view" hidden></canvas>
+    <div id="hint" hidden>Arrows/WASD to move, Up/W/Space to jump &middot; open a second window to see it synced</div>
     <div id="winner"></div>
     <script type="module" src="/client.js"></script>
   </body>

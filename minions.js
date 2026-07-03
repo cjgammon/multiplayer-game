@@ -3,7 +3,7 @@
 // Minion since no player drives it, so its stepping logic only needs to run
 // in the server's authoritative fixedUpdate (see server.js's MinionDirector).
 import { Entity } from "@cjgammon/gamekit";
-import { TILE, TEAM_A } from "./maps.js";
+import { TILE, TEAMS } from "./shared.js";
 
 export const MINION_W = 10;
 export const MINION_H = 10;
@@ -17,11 +17,17 @@ export const MINION_SPAWN_INTERVAL = 6; // seconds between waves, per Lane per T
  * Convert a Lane's tile-coordinate path (see maps.js) into the pixel-space
  * waypoints one Team's Minions walk, ordered from that Team's Base toward the
  * enemy's. `lane.points` runs Team A's Base -> Team B's Base, so Team B's
- * Minions walk the same points in reverse.
+ * Minions walk the same points in reverse. `p.y * TILE` is the floor tile's
+ * *top* edge — offset by MINION_H so a Minion's feet (not its top-left
+ * corner) rest on the floor, the same convention maps.js's `base`/`tower`
+ * helpers use for their own y (e.g. `15 * TILE - BASE_SIZE`).
  */
 export function laneWaypoints(lane, team) {
-  const points = lane.points.map((p) => ({ x: p.x * TILE, y: p.y * TILE }));
-  return team === TEAM_A ? points : points.slice().reverse();
+  const points = lane.points.map((p) => ({
+    x: p.x * TILE,
+    y: p.y * TILE - MINION_H,
+  }));
+  return team === TEAMS[0] ? points : points.slice().reverse();
 }
 
 /**

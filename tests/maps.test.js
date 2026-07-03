@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { TILE, TEAM_A, TEAM_B, MAPS, getMap, buildMapData } from "../maps.js";
+import { TILE, TEAMS } from "../shared.js";
+import { MAPS, getMap, buildMapData } from "../maps.js";
 
 describe("getMap", () => {
   test("returns the singleLane map with one lane and two bases", () => {
@@ -22,7 +23,7 @@ describe("getMap", () => {
     test(`${id}: bases belong to two distinct teams`, () => {
       const map = getMap(id);
       const teams = map.bases.map((b) => b.team).sort();
-      expect(teams).toEqual([TEAM_A, TEAM_B]);
+      expect(teams).toEqual([...TEAMS].sort());
     });
 
     test(`${id}: every lane has a path of at least two points and one tower`, () => {
