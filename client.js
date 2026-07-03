@@ -246,6 +246,13 @@ function main() {
     // Config (size/drag/maxVelocity) must match the server's Character exactly
     // so client-side prediction integrates identically.
     class CharacterView extends Sprite {
+      // Secondary Ability (dash) state — mirrors server.js's Character
+      // fields since shared.js's stepCharacter (this scene's `simulate`,
+      // below) reads/writes them during prediction and reconciliation replay.
+      facing = 1;
+      dashCooldown = 0;
+      dashTimer = 0;
+
       constructor() {
         super();
         this.width = CHAR_W;
@@ -256,14 +263,19 @@ function main() {
 
       // Reads the payload the server's Character.netState() sends. gamekit
       // 0.2.0 restores velocity automatically before reconciliation replay;
-      // grounded/prevJump are app-specific jump-edge state it doesn't know
-      // about, so we still restore those ourselves — applyNetState is
-      // guaranteed to run before the replay (see SimulateFn's doc comment).
+      // grounded/prevJump/facing/dash* are app-specific state stepCharacter
+      // reads/writes that it doesn't know about, so we still restore those
+      // ourselves — applyNetState is guaranteed to run before the replay
+      // (see SimulateFn's doc comment).
       applyNetState(state) {
         if (!state) return;
         if (state.color !== undefined) this.tint = state.color;
         if (state.grounded !== undefined) this._grounded = state.grounded;
         if (state.prevJump !== undefined) this._prevJump = state.prevJump;
+        if (state.facing !== undefined) this.facing = state.facing;
+        if (state.prevDash !== undefined) this._prevDash = state.prevDash;
+        if (state.dashCooldown !== undefined) this.dashCooldown = state.dashCooldown;
+        if (state.dashTimer !== undefined) this.dashTimer = state.dashTimer;
       }
     }
 
@@ -374,7 +386,7 @@ function main() {
     // isn't predicted (see ProjectileView above) — it's just relayed to the
     // server, which edge-triggers/cooldown-gates it (see projectiles.js's
     // stepPrimaryAbility) the same way `jump` is edge-triggered locally.
-    const input = { left: false, right: false, jump: false, fire: false };
+    const input = { left: false, right: false, jump: false, fire: false, dash: false };
     // Tracks the last movement direction, mirroring server.js's
     // Character.facing purely locally — used only to place the muzzle flash
     // below on the correct side; the server derives its own copy the same
@@ -420,6 +432,7 @@ function main() {
       ArrowRight: "right", KeyD: "right",
       ArrowUp: "jump", KeyW: "jump", Space: "jump",
       KeyF: "fire",
+      ShiftLeft: "dash", ShiftRight: "dash",
     };
     function setKey(e, down) {
       const dir = KEYS[e.code];

@@ -31,11 +31,18 @@ const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
 
 class Character extends Entity {
   // The server sets this from the client's latest input each tick.
-  input = { left: false, right: false, jump: false, fire: false };
+  input = { left: false, right: false, jump: false, fire: false, dash: false };
   // Last non-neutral horizontal input direction — where the Primary Ability
-  // fires (see projectiles.js's stepPrimaryAbility). Defaults to facing right.
+  // fires (see projectiles.js's stepPrimaryAbility) and which way the dash
+  // Secondary Ability launches (see shared.js's stepCharacter). Defaults to
+  // facing right.
   facing = 1;
   primaryCooldown = 0;
+  // Secondary Ability (dash) state — advanced by shared.js's stepCharacter,
+  // the same predicted function the client replays, so it must round-trip
+  // through netState()/applyNetState() below like grounded/prevJump does.
+  dashCooldown = 0;
+  dashTimer = 0;
 
   constructor(x, y, team, character, game) {
     super(x, y);
@@ -79,6 +86,10 @@ class Character extends Entity {
       character: this.character,
       grounded: this._grounded,
       prevJump: this._prevJump,
+      facing: this.facing,
+      prevDash: this._prevDash,
+      dashCooldown: this.dashCooldown,
+      dashTimer: this.dashTimer,
     };
   }
 }
