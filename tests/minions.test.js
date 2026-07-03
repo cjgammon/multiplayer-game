@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { getMap, TILE, TEAM_A, TEAM_B } from "../maps.js";
+import { getMap } from "../maps.js";
+import { TILE, TEAMS } from "../shared.js";
 import {
   Minion,
   canEngage,
@@ -11,6 +12,8 @@ import {
   MINION_ATTACK_INTERVAL,
   MINION_SPEED,
 } from "../minions.js";
+
+const [TEAM_A, TEAM_B] = TEAMS;
 
 describe("laneWaypoints", () => {
   const lane = getMap("singleLane").lanes[0];

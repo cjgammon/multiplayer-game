@@ -1,17 +1,21 @@
-// server.js — authoritative server. Run with Node (not Bun): the
+// server.js — lobby + authoritative server. Run with Node (not Bun): the
 // from-scratch WebSocket server needs Node's `http` upgrade handshake.
+//
+// One `WebSocketServer` accepts every connection into the lobby first (room
+// codes, Team + Character select, ready-up — see room.js). Per ADR-0001 that
+// routing lives here, not in @cjgammon/gamekit-server: each Room gets its own
+// `ServerGame`/`NetServer`, created only once all of that Room's players are
+// ready, so multiple Matches can run concurrently in this one process.
 import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-server";
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
-  TICK_RATE, PORT,
-  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y,
+  TICK_RATE, PORT, TILE, TEAMS,
+  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS,
   stepCharacter,
 } from "./shared.js";
-import { TILE, TEAM_A, TEAM_B, TEAM_COLORS, getMap, buildMapData, worldSize } from "./maps.js";
+import { getMap, buildMapData, worldSize } from "./maps.js";
+import { LobbyManager } from "./room.js";
 import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
-
-// A handful of distinguishable tints, cycling for more than 4 players.
-const COLORS = [0xe8543e, 0x3ea1e8, 0x4bd17c, 0xe8c93e];
 
 // Selects which Map to run — the client must be pointed at the same one
 // (its `?map=` query param) since both sides build the Tilemap locally.
@@ -24,13 +28,14 @@ class Character extends Entity {
   // The server sets this from the client's latest input each tick.
   input = { left: false, right: false, jump: false };
 
-  constructor(x, y, color) {
+  constructor(x, y, team, character) {
     super(x, y);
     this.width = CHAR_W;
     this.height = CHAR_H;
     this.drag.set(DRAG_X, 0);
     this.maxVelocity.set(MAX_VEL_X, MAX_VEL_Y);
-    this.color = color;
+    this.color = TEAM_COLORS[team];
+    this.character = character;
   }
 
   // The authoritative simulation: gravity, run, jump, tilemap collision.
@@ -46,38 +51,29 @@ class Character extends Entity {
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
   // replay (see SimulateFn's doc comment in gamekit).
   netState() {
-    return { color: this.color, grounded: this._grounded, prevJump: this._prevJump };
+    return {
+      color: this.color,
+      character: this.character,
+      grounded: this._grounded,
+      prevJump: this._prevJump,
+    };
   }
 }
 
-const game = new ServerGame(
-  { width: WORLD_W, height: WORLD_H, tickRate: TICK_RATE },
-  {
-    // The client factory registers this tag under "character" — must match.
-    playerType: "character",
-    // Spawn one Character per connection, spread out along the floor.
-    createPlayer: (info) =>
-      new Character(
-        TILE * 3 + info.index * TILE * 2,
-        SPAWN_Y,
-        COLORS[info.index % COLORS.length],
-      ),
-  },
-);
-
-// Drives Minion waves and same-Lane combat, independent of any connection —
-// see acceptance criteria on #4 ("no player input required"). Not net.spawn'd
-// itself (no visual representation to sync); added ahead of any Minion so its
-// fixedUpdate (combat resolution, then spawning) always runs before theirs
-// within the same tick, letting a Minion's own fixedUpdate see this tick's
-// `engaged` flag the moment it's set.
+// Drives Minion waves and same-Lane combat for a Match, independent of any
+// connection — see acceptance criteria on #4 ("no player input required").
+// Not net.spawn'd itself (no visual representation to sync); startMatch below
+// adds one to each Match's Scene ahead of any Minion, so its fixedUpdate
+// (combat resolution, then spawning) always runs before theirs within the
+// same tick, letting a Minion's own fixedUpdate see this tick's `engaged`
+// flag the moment it's set.
 class MinionDirector extends Entity {
   constructor(game) {
     super();
     this.game = game;
-    // One spawn countdown per [laneIndex][team], seeded at 0 so the first
-    // wave on each Lane appears immediately rather than after a full wait.
-    this.timers = map.lanes.map(() => [0, 0]);
+    // One spawn countdown per Lane per Team, seeded at 0 so the first wave on
+    // each Lane appears immediately rather than after a full wait.
+    this.timers = map.lanes.map(() => Object.fromEntries(TEAMS.map((t) => [t, 0])));
   }
 
   fixedUpdate(dt) {
@@ -100,7 +96,7 @@ class MinionDirector extends Entity {
 
   _spawnWaves(dt) {
     map.lanes.forEach((lane, laneIndex) => {
-      for (const team of [TEAM_A, TEAM_B]) {
+      for (const team of TEAMS) {
         const remaining = this.timers[laneIndex][team] - dt;
         if (remaining <= 0) {
           this.timers[laneIndex][team] = remaining + MINION_SPAWN_INTERVAL;
@@ -119,9 +115,38 @@ class MinionDirector extends Entity {
   }
 }
 
-game.scene.add(new MinionDirector(game));
+// Builds and starts one ServerGame for a Room whose players are all ready,
+// then hands each player's already-open connection to it — the "connected
+// Character flow" from #1, entered once per Match instead of at process
+// startup. `room.playerOrder` fixes the order `accept()` is called in, which
+// is the same order NetServer assigns `PlayerInfo.index`, so `createPlayer`
+// below can look a player's Team/Character choice back up by index.
+function startMatch(room) {
+  const players = room.playerOrder.map((id) => room.players.get(id));
+
+  const game = new ServerGame(
+    { width: WORLD_W, height: WORLD_H, tickRate: TICK_RATE },
+    {
+      playerType: "character",
+      createPlayer: (info) => {
+        const player = players[info.index];
+        return new Character(
+          TILE * 3 + info.index * TILE * 2,
+          SPAWN_Y,
+          player.team,
+          player.character,
+        );
+      },
+    },
+  );
+
+  for (const player of players) game.accept(player.transport);
+  game.scene.add(new MinionDirector(game));
+  game.start();
+}
+
+const lobby = new LobbyManager({ onMatchStart: startMatch });
 
 const ws = new WebSocketServer();
-ws.onConnection.add((conn) => game.accept(new ServerTransport(conn)));
+ws.onConnection.add((conn) => lobby.handleConnection(new ServerTransport(conn)));
 ws.listen(PORT, () => console.log(`multiplayer-game server on ws://localhost:${PORT}`));
-game.start();

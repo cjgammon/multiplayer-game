@@ -11,14 +11,12 @@
 // has any simulated state yet. When Towers/Bases gain HP/destruction, that's
 // the point to move them to server-authoritative net.spawn entities — the
 // position/team/lane data defined here won't need to change.
+//
+// A Base's `team` field uses the same "A"/"B" ids as shared.js's `TEAMS`
+// (the lobby's Team select) — TEAM_COLORS for rendering also lives there.
+import { TILE } from "./shared.js";
 
-export const TILE = 16;
-
-export const TEAM_A = 0;
-export const TEAM_B = 1;
-
-// Placeholder tints — no art pipeline yet (see CONTEXT.md decisions).
-export const TEAM_COLORS = [0x3ea1e8, 0xe8543e]; // A: blue, B: red
+// Placeholder tint — no art pipeline yet (see CONTEXT.md decisions).
 export const TOWER_COLOR = 0xd8d8d8; // neutral checkpoint, not team-owned
 
 const BASE_SIZE = TILE * 3;
@@ -39,8 +37,8 @@ export const MAPS = {
     cols: 40,
     rows: 16,
     bases: [
-      base(TEAM_A, TILE, 15 * TILE - BASE_SIZE),
-      base(TEAM_B, 40 * TILE - TILE - BASE_SIZE, 15 * TILE - BASE_SIZE),
+      base("A", TILE, 15 * TILE - BASE_SIZE),
+      base("B", 40 * TILE - TILE - BASE_SIZE, 15 * TILE - BASE_SIZE),
     ],
     lanes: [
       {
@@ -58,8 +56,8 @@ export const MAPS = {
     cols: 48,
     rows: 28,
     bases: [
-      base(TEAM_A, TILE, 13 * TILE - BASE_SIZE),
-      base(TEAM_B, 48 * TILE - TILE - BASE_SIZE, 13 * TILE - BASE_SIZE),
+      base("A", TILE, 13 * TILE - BASE_SIZE),
+      base("B", 48 * TILE - TILE - BASE_SIZE, 13 * TILE - BASE_SIZE),
     ],
     lanes: [
       {

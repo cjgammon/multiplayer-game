@@ -3,7 +3,7 @@
 // Minion since no player drives it, so its stepping logic only needs to run
 // in the server's authoritative fixedUpdate (see server.js's MinionDirector).
 import { Entity } from "@cjgammon/gamekit";
-import { TILE, TEAM_A } from "./maps.js";
+import { TILE, TEAMS } from "./shared.js";
 
 export const MINION_W = 10;
 export const MINION_H = 10;
@@ -27,7 +27,7 @@ export function laneWaypoints(lane, team) {
     x: p.x * TILE,
     y: p.y * TILE - MINION_H,
   }));
-  return team === TEAM_A ? points : points.slice().reverse();
+  return team === TEAMS[0] ? points : points.slice().reverse();
 }
 
 /**
