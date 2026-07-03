@@ -66,6 +66,7 @@ function main() {
 
   let ws = null;
   let latestState = null;
+  let devPanelJumpBtn = null;
   const pending = [];
 
   function send(msg) {
@@ -154,6 +155,53 @@ function main() {
     connect({ k: "create-room" });
   });
 
+  setupDevPanel();
+
+  // Dev-only shortcut, mounted straight into the real lobby flow: it calls
+  // the SAME connect()/send() this file already uses, rather than a second
+  // module speaking the lobby wire protocol on its own — the next dev tool
+  // added here should follow the same shape (dev-only via hostname check,
+  // drive real app functions instead of duplicating protocol logic).
+  function setupDevPanel() {
+    if (location.hostname !== "localhost") return;
+
+    const panelEl = document.getElementById("dev-panel");
+    const tabEl = document.getElementById("dev-panel-tab");
+    const bodyEl = document.getElementById("dev-panel-body");
+    const jumpBtn = document.getElementById("dev-panel-jump");
+
+    panelEl.hidden = false;
+
+    function toggle() {
+      bodyEl.hidden = !bodyEl.hidden;
+    }
+    tabEl.addEventListener("click", toggle);
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Backquote") toggle();
+    });
+
+    jumpBtn.addEventListener("click", () => {
+      if (jumpBtn.disabled) return;
+      // "Full auto-flow regardless of current state" means this can fire
+      // while a previous connection is still open (e.g. mid lobby, not yet
+      // ready) — close it first so its stray room-state broadcasts can't
+      // clobber the fresh room's latestState.
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+      }
+      pending.length = 0;
+      landingError.textContent = "";
+      connect({ k: "create-room" });
+      send({ k: "pick-character", character: CHARACTERS[0].id });
+      send({ k: "pick-team", team: TEAMS[0] });
+      send({ k: "set-ready", ready: true });
+    });
+
+    devPanelJumpBtn = jumpBtn;
+  }
+
   joinBtn.addEventListener("click", () => {
     const code = joinCodeInput.value.trim().toUpperCase();
     if (!code) return;
@@ -170,6 +218,7 @@ function main() {
     lobbyEl.hidden = true;
     canvas.hidden = false;
     hintEl.hidden = false;
+    if (devPanelJumpBtn) devPanelJumpBtn.disabled = true;
 
     // Built locally from the same shared data the server uses — the map is
     // static, so it isn't sent over the wire; both sides must agree on it byte
