@@ -19,6 +19,11 @@
         position: fixed; bottom: 12px; left: 0; right: 0;
         text-align: center; color: #888; font: 13px system-ui, sans-serif;
       }
+      #winner {
+        position: fixed; top: 40%; left: 0; right: 0;
+        text-align: center; color: #fff; font: bold 28px system-ui, sans-serif;
+        display: none;
+      }
 
       #lobby { width: 360px; }
       #lobby button { cursor: pointer; }
@@ -74,6 +79,7 @@
       </div>
       <button id="dev-panel-tab">DEV</button>
     </div>
+    <div id="winner"></div>
     <script type="module" src="/client.js"></script>
   </body>
 </html>

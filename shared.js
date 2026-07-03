@@ -1,7 +1,7 @@
-// shared.js — constants, map data, and the one movement function both the
-// server (real simulation) and the client (local prediction + reconciliation
-// replay) call. Both sides must build an identical Tilemap from
-// `buildMapData()`; the map is static and known at build time, so it isn't
+// shared.js — constants and the one movement function both the server (real
+// simulation) and the client (local prediction + reconciliation replay)
+// call. Map data itself (Lanes, Bases, Towers, Tilemap grid) lives in
+// maps.js — see its header comment for why it's shared/local rather than
 // networked.
 import { Entity } from "@cjgammon/gamekit";
 
@@ -17,10 +17,6 @@ const envPort =
 export const PORT = Number(envPort) || 39500;
 
 export const TILE = 16;
-export const MAP_COLS = 40;
-export const MAP_ROWS = 16;
-export const WORLD_W = MAP_COLS * TILE; // 640
-export const WORLD_H = MAP_ROWS * TILE; // 256
 
 export const CHAR_W = 14;
 export const CHAR_H = 20;
@@ -38,22 +34,10 @@ export const SPAWN_Y = TILE * 2;
 // Lobby: the two Teams a player can join, and the Character roster a player
 // can pick from. Only one Character exists so far (from #1); later slices
 // (#8) add entries here without changing the lobby/select flow's shape.
+// Bases in maps.js use these same "A"/"B" ids for their `team` field.
 export const TEAMS = ["A", "B"];
 export const TEAM_COLORS = { A: 0xe8543e, B: 0x3ea1e8 };
 export const CHARACTERS = [{ id: "naut", name: "Naut" }];
-
-/** An empty arena: solid floor + side walls, nothing else. */
-export function buildMapData() {
-  const data = new Array(MAP_COLS * MAP_ROWS).fill(0);
-  for (let col = 0; col < MAP_COLS; col++) {
-    data[(MAP_ROWS - 1) * MAP_COLS + col] = 1; // floor
-  }
-  for (let row = 0; row < MAP_ROWS; row++) {
-    data[row * MAP_COLS] = 1; // left wall
-    data[row * MAP_COLS + MAP_COLS - 1] = 1; // right wall
-  }
-  return data;
-}
 
 function isGrounded(entity, tilemap) {
   const footY = entity.y + entity.height + 1;
