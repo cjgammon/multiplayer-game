@@ -4,7 +4,6 @@
 // maps.js — see its header comment for why it's shared/local rather than
 // networked.
 import { Entity } from "@cjgammon/gamekit";
-import { TILE } from "./maps.js";
 
 export const TICK_RATE = 20; // fixed ticks/sec, server and client
 
@@ -16,6 +15,8 @@ const envPort =
   (typeof process !== "undefined" && process.env && process.env.PORT) ||
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_WS_PORT);
 export const PORT = Number(envPort) || 39500;
+
+export const TILE = 16;
 
 export const CHAR_W = 14;
 export const CHAR_H = 20;
@@ -29,6 +30,14 @@ export const GRAVITY = 900;
 export const JUMP_VELOCITY = 340;
 
 export const SPAWN_Y = TILE * 2;
+
+// Lobby: the two Teams a player can join, and the Character roster a player
+// can pick from. Only one Character exists so far (from #1); later slices
+// (#8) add entries here without changing the lobby/select flow's shape.
+// Bases in maps.js use these same "A"/"B" ids for their `team` field.
+export const TEAMS = ["A", "B"];
+export const TEAM_COLORS = { A: 0xe8543e, B: 0x3ea1e8 };
+export const CHARACTERS = [{ id: "naut", name: "Naut" }];
 
 function isGrounded(entity, tilemap) {
   const footY = entity.y + entity.height + 1;
