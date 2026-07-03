@@ -12,10 +12,12 @@ import {
   mountUnsupportedNotice,
 } from "@cjgammon/gamekit/renderer";
 import {
-  TICK_RATE, PORT, TILE, MAP_COLS, MAP_ROWS, WORLD_W, WORLD_H,
-  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAMS, CHARACTERS,
-  buildMapData, stepCharacter,
+  TICK_RATE, PORT, TILE,
+  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAMS, CHARACTERS, TEAM_COLORS,
+  stepCharacter,
 } from "./shared.js";
+import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
+import { MINION_W, MINION_H } from "./minions.js";
 
 const canvas = document.getElementById("view");
 
@@ -35,6 +37,13 @@ class LiveTransport {
 
   constructor(ws) {
     this._ws = ws;
+    // The lobby's JSON protocol never needed binary frames, so the socket was
+    // never switched off the WebSocket default of "blob". The Match protocol
+    // (NetClient's binary codec) needs ArrayBuffer — gamekit's own
+    // WebSocketTransport sets this in its constructor for the same reason;
+    // we must do it too since we're handing off an already-open socket
+    // instead of letting NetClient/WebSocketTransport open its own.
+    ws.binaryType = "arraybuffer";
     ws.onmessage = (e) => this.onMessage.emit(e.data);
     ws.onclose = () => this.onClose.emit();
   }
@@ -171,10 +180,16 @@ function main() {
     canvas.hidden = false;
     hintEl.hidden = false;
 
+    // Selects which Map to render — must match the server's MAP_ID env var
+    // (both build the Tilemap locally from the same data; see maps.js).
+    const mapId = new URLSearchParams(location.search).get("map") || "singleLane";
+    const map = getMap(mapId);
+    const { width: WORLD_W, height: WORLD_H } = worldSize(map);
+
     // Built locally from the same shared data the server uses — the map is
     // static, so it isn't sent over the wire; both sides must agree on it byte
     // for byte or client-side collision (prediction + collide) would diverge.
-    const tilemap = new Tilemap(MAP_COLS, MAP_ROWS, TILE, TILE, buildMapData());
+    const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
     tilemap.tint = 0x445566;
 
     // Untextured Sprite → renders as a solid tinted box (no art pipeline yet).
@@ -202,8 +217,55 @@ function main() {
       }
     }
 
+    // Untextured Sprite → renders as a solid tinted box, same as CharacterView.
+    // Not predicted (no player drives a Minion) — NetClient interpolates it
+    // like any other remote entity, from the position the server broadcasts.
+    class MinionView extends Sprite {
+      constructor() {
+        super();
+        this.width = MINION_W;
+        this.height = MINION_H;
+      }
+
+      // Reads the payload the server's Minion.netState() sends.
+      applyNetState(state) {
+        if (!state) return;
+        if (state.color !== undefined) this.tint = state.color;
+      }
+    }
+
+    // Bases and Towers are now server-authoritative net.spawn entities (see
+    // structures.js and server.js's MinionDirector) — HP/destruction lives
+    // there, so the client just renders whatever position/state the server
+    // sends, same as Minion.
+    class TowerView extends Sprite {
+      constructor() {
+        super();
+        this.width = TOWER_SIZE;
+        this.height = TOWER_SIZE;
+        this.tint = TOWER_COLOR;
+      }
+    }
+
+    class BaseView extends Sprite {
+      constructor() {
+        super();
+        this.width = BASE_SIZE;
+        this.height = BASE_SIZE;
+      }
+
+      // Reads the payload the server's Base.netState() sends.
+      applyNetState(state) {
+        if (!state) return;
+        if (state.team !== undefined) this.tint = TEAM_COLORS[state.team];
+      }
+    }
+
     const factory = createEntityFactory({
       character: () => new CharacterView(),
+      minion: () => new MinionView(),
+      tower: () => new TowerView(),
+      base: () => new BaseView(),
     });
 
     class WorldScene extends NetScene {
@@ -255,5 +317,16 @@ function main() {
     }
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
+
+    // Match end: the server sets {winner} via net.setState once a Base is
+    // destroyed (see server.js's MinionDirector._endMatch) — surfaced here
+    // since it's the only observable sign the Match is over (no HUD/text
+    // rendering pipeline yet).
+    const winnerEl = document.getElementById("winner");
+    scene.client.onState.add((state) => {
+      if (!state || state.winner === undefined) return;
+      winnerEl.textContent = `Team ${state.winner} wins!`;
+      winnerEl.style.display = "block";
+    });
   }
 }
