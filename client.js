@@ -36,6 +36,13 @@ class LiveTransport {
 
   constructor(ws) {
     this._ws = ws;
+    // The lobby's JSON protocol never needed binary frames, so the socket was
+    // never switched off the WebSocket default of "blob". The Match protocol
+    // (NetClient's binary codec) needs ArrayBuffer — gamekit's own
+    // WebSocketTransport sets this in its constructor for the same reason;
+    // we must do it too since we're handing off an already-open socket
+    // instead of letting NetClient/WebSocketTransport open its own.
+    ws.binaryType = "arraybuffer";
     ws.onmessage = (e) => this.onMessage.emit(e.data);
     ws.onclose = () => this.onClose.emit();
   }
