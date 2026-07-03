@@ -18,7 +18,7 @@ import {
 } from "./shared.js";
 import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
 import { MINION_W, MINION_H } from "./minions.js";
-import { PROJECTILE_W, PROJECTILE_H } from "./projectiles.js";
+import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "./projectiles.js";
 
 const canvas = document.getElementById("view");
 
@@ -375,6 +375,46 @@ function main() {
     // server, which edge-triggers/cooldown-gates it (see projectiles.js's
     // stepPrimaryAbility) the same way `jump` is edge-triggered locally.
     const input = { left: false, right: false, jump: false, fire: false };
+    // Tracks the last movement direction, mirroring server.js's
+    // Character.facing purely locally — used only to place the muzzle flash
+    // below on the correct side; the server derives its own copy the same
+    // way from the same input, so this never needs to be synced.
+    let localFacing = 1;
+    // Real time (not tick-based — this fires from a DOM event, off the fixed
+    // step), mirroring PROJECTILE_COOLDOWN so the flash doesn't fire faster
+    // than the server would actually spawn a Projectile. This is a cosmetic
+    // gate only, not authoritative — the server still independently
+    // cooldown-gates the real shot.
+    let nextFlashReadyAt = 0;
+
+    // Immediate, local-only feedback for a fire press: the real Projectile
+    // isn't predicted (see the comment above), so without this a press feels
+    // laggy — it's ~100ms+ (interpolation buffer + round trip) before
+    // anything appears. Not net-synced, so other players never see it; it
+    // exists purely to make pressing F feel responsive. Spawn math mirrors
+    // server.js's Character._firePrimary exactly, so the flash lines up with
+    // where the real Projectile will appear moments later.
+    function spawnMuzzleFlash(facing) {
+      const local = scene.client.entities.get(scene.client.you);
+      if (!local) return;
+      const flash = new Sprite();
+      flash.width = PROJECTILE_W;
+      flash.height = PROJECTILE_H;
+      flash.tint = 0xffffff;
+      // setPosition (not a plain x/y assignment) snaps prevX/prevY to match —
+      // otherwise the Entity default constructs at (0, 0) and this Sprite's
+      // first interpolated frame smears in from the top-left corner of the
+      // world instead of just appearing at the muzzle.
+      flash.setPosition(
+        facing > 0 ? local.x + local.width : local.x - PROJECTILE_W,
+        local.y + local.height / 2 - PROJECTILE_H / 2,
+      );
+      scene.add(flash);
+      scene.tween(flash, { scaleX: 2.5, scaleY: 2.5 }, 0.12, {
+        onComplete: () => flash.kill(),
+      });
+    }
+
     const KEYS = {
       ArrowLeft: "left", KeyA: "left",
       ArrowRight: "right", KeyD: "right",
@@ -385,6 +425,15 @@ function main() {
       const dir = KEYS[e.code];
       if (!dir || input[dir] === down) return;
       input[dir] = down;
+      if (down && dir === "left") localFacing = -1;
+      if (down && dir === "right") localFacing = 1;
+      if (down && dir === "fire") {
+        const now = performance.now();
+        if (now >= nextFlashReadyAt) {
+          nextFlashReadyAt = now + PROJECTILE_COOLDOWN * 1000;
+          spawnMuzzleFlash(localFacing);
+        }
+      }
       scene.client.setLocalInput(input); // predicted + sent automatically
       e.preventDefault();
     }
