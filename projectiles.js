@@ -66,19 +66,17 @@ export class Projectile extends Entity {
 
 /**
  * Advance a Character's Primary Ability state one fixed step: cooldown
- * countdown, facing tracked from the latest movement input (so a shot fires
- * the direction the Character is walking/last walked), and an edge-triggered
- * fire request exactly like shared.js's stepCharacter jump handling — holding
- * the fire key doesn't spam-fire, only the moment it's pressed does, and even
- * then only once `primaryCooldown` has elapsed. Returns whether to spawn a
+ * countdown and an edge-triggered fire request exactly like shared.js's
+ * stepCharacter jump handling — holding the fire key doesn't spam-fire, only
+ * the moment it's pressed does, and even then only once `primaryCooldown` has
+ * elapsed. Fires in `character.facing`'s direction — tracked by
+ * stepCharacter (called first each tick, see server.js's Character.fixedUpdate)
+ * since dash needs that same facing state. Returns whether to spawn a
  * projectile this tick; the caller (server.js's Character.fixedUpdate) does
  * the actual spawning since that needs the net layer, not this pure function.
  */
 export function stepPrimaryAbility(character, input, dt) {
   if (character.primaryCooldown > 0) character.primaryCooldown -= dt;
-
-  if (input.left) character.facing = -1;
-  else if (input.right) character.facing = 1;
 
   const requesting = !!input.fire && !character._prevFire;
   character._prevFire = !!input.fire;

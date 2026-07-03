@@ -99,20 +99,6 @@ describe("stepPrimaryAbility", () => {
     expect(stepPrimaryAbility(c, { fire: true }, 0)).toBe(false);
   });
 
-  test("tracks facing from the latest movement input", () => {
-    const c = character();
-    stepPrimaryAbility(c, { left: true }, 0);
-    expect(c.facing).toBe(-1);
-    stepPrimaryAbility(c, { right: true }, 0);
-    expect(c.facing).toBe(1);
-  });
-
-  test("keeps the last facing when neither left nor right is held", () => {
-    const c = character();
-    stepPrimaryAbility(c, { left: true }, 0);
-    stepPrimaryAbility(c, {}, 0);
-    expect(c.facing).toBe(-1);
-  });
 });
 
 describe("canHit", () => {
