@@ -6,11 +6,11 @@
 // original empty-arena map from #1: static Map content is shared/local, not
 // networked, because both sides can derive it identically at load time.
 //
-// Base/Tower are rendered client-side directly from this data (see
-// client.js) rather than as server-owned net.spawn entities, since neither
-// has any simulated state yet. When Towers/Bases gain HP/destruction, that's
-// the point to move them to server-authoritative net.spawn entities — the
-// position/team/lane data defined here won't need to change.
+// Base/Tower position/size/team data here feeds server-authoritative
+// net.spawn entities (see structures.js's Tower/Base and server.js's
+// MinionDirector, which builds one of each from this data) — the position
+// data defined here didn't need to change when they gained HP/destruction
+// in #5.
 //
 // A Base's `team` field uses the same "A"/"B" ids as shared.js's `TEAMS`
 // (the lobby's Team select) — TEAM_COLORS for rendering also lives there.
@@ -19,8 +19,8 @@ import { TILE } from "./shared.js";
 // Placeholder tint — no art pipeline yet (see CONTEXT.md decisions).
 export const TOWER_COLOR = 0xd8d8d8; // neutral checkpoint, not team-owned
 
-const BASE_SIZE = TILE * 3;
-const TOWER_SIZE = TILE * 2;
+export const BASE_SIZE = TILE * 3;
+export const TOWER_SIZE = TILE * 2;
 
 function base(team, x, y) {
   return { team, x, y, w: BASE_SIZE, h: BASE_SIZE };
