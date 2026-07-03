@@ -17,6 +17,10 @@ import { getMap, buildMapData, worldSize } from "./maps.js";
 import { LobbyManager } from "./room.js";
 import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
 import { Tower, Base, canEngageTower, canEngageBase, resolveStructureDamage } from "./structures.js";
+import {
+  Projectile, PROJECTILE_W, PROJECTILE_H,
+  stepPrimaryAbility, canHit, applyProjectileDamage,
+} from "./projectiles.js";
 
 // Selects which Map to run — the client must be pointed at the same one
 // (its `?map=` query param) since both sides build the Tilemap locally.
@@ -27,9 +31,13 @@ const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
 
 class Character extends Entity {
   // The server sets this from the client's latest input each tick.
-  input = { left: false, right: false, jump: false };
+  input = { left: false, right: false, jump: false, fire: false };
+  // Last non-neutral horizontal input direction — where the Primary Ability
+  // fires (see projectiles.js's stepPrimaryAbility). Defaults to facing right.
+  facing = 1;
+  primaryCooldown = 0;
 
-  constructor(x, y, team, character) {
+  constructor(x, y, team, character, game) {
     super(x, y);
     this.width = CHAR_W;
     this.height = CHAR_H;
@@ -37,11 +45,25 @@ class Character extends Entity {
     this.maxVelocity.set(MAX_VEL_X, MAX_VEL_Y);
     this.color = TEAM_COLORS[team];
     this.character = character;
+    this.team = team;
+    this.game = game;
   }
 
-  // The authoritative simulation: gravity, run, jump, tilemap collision.
+  // The authoritative simulation: gravity, run, jump, tilemap collision, then
+  // the Primary Ability's cooldown/facing/fire-edge state (see #6).
   fixedUpdate(dt) {
     stepCharacter(this, this.input, dt, tilemap);
+    if (stepPrimaryAbility(this, this.input, dt)) this._firePrimary();
+  }
+
+  // Spawns a Projectile just past the Character's leading edge, traveling
+  // toward `facing`. Delegates to the combat director (rather than
+  // net.spawn'ing directly) so the Projectile is tracked for hit resolution
+  // the same way Minions are tracked — see MinionDirector.spawnProjectile.
+  _firePrimary() {
+    const x = this.facing > 0 ? this.x + this.width : this.x - PROJECTILE_W;
+    const y = this.y + this.height / 2 - PROJECTILE_H / 2;
+    this.game.combatDirector.spawnProjectile(x, y, this.team, this.facing);
   }
 
   // Per-entity payload the client reads via CharacterView.applyNetState.
@@ -61,13 +83,14 @@ class Character extends Entity {
   }
 }
 
-// Drives Minion waves and same-Lane combat for a Match, independent of any
-// connection — see acceptance criteria on #4 ("no player input required").
-// Not net.spawn'd itself (no visual representation to sync); startMatch below
-// adds one to each Match's Scene ahead of any Minion, so its fixedUpdate
-// (combat resolution, then spawning) always runs before theirs within the
-// same tick, letting a Minion's own fixedUpdate see this tick's `engaged`
-// flag the moment it's set.
+// Drives Minion waves, same-Lane combat, and Character Primary Ability
+// Projectiles for a Match, independent of any connection — see acceptance
+// criteria on #4 ("no player input required"). Not net.spawn'd itself (no
+// visual representation to sync); startMatch below adds one to each Match's
+// Scene ahead of any Minion, so its fixedUpdate (combat resolution, then
+// spawning) always runs before theirs within the same tick, letting a
+// Minion's own fixedUpdate see this tick's `engaged` flag the moment it's
+// set.
 class MinionDirector extends Entity {
   constructor(game) {
     super();
@@ -79,6 +102,12 @@ class MinionDirector extends Entity {
     // gating can walk "this Minion's own Lane's Tower" in O(1) — see
     // _resolveStructureDamage.
     this.minions = [];
+    // Live Projectiles fired by any Character's Primary Ability (see
+    // Character._firePrimary/spawnProjectile below) — tracked here for
+    // lifetime/despawn bookkeeping (_despawnProjectiles); each Projectile
+    // resolves its own hit test against `minions`/`towers` (see
+    // resolveProjectileHit below).
+    this.projectiles = [];
     // Set once a Base's core is destroyed — freezes further combat/spawning
     // (see fixedUpdate) so the Match stops in place instead of continuing
     // past the losing Team's Base falling.
@@ -102,6 +131,11 @@ class MinionDirector extends Entity {
     if (this.winner !== null) return; // Match over.
     this._resolveCombat();
     this._spawnWaves(dt);
+    // Projectiles resolve their own hits (see resolveProjectileHit below and
+    // projectiles.js's comment on why) as part of their own fixedUpdate later
+    // in this same tick's scene sweep — this only sweeps up whatever's spent
+    // or expired as of last tick.
+    this._despawnProjectiles();
   }
 
   _resolveCombat() {
@@ -178,6 +212,49 @@ class MinionDirector extends Entity {
     const index = this.minions.indexOf(minion);
     if (index !== -1) this.minions.splice(index, 1);
   }
+
+  // Spawns and tracks a Character's Primary Ability Projectile — called by
+  // Character._firePrimary via `game.combatDirector` (see startMatch, which
+  // assigns this Director there right after constructing it) rather than the
+  // Character net.spawn'ing directly, so it joins `this.projectiles` for
+  // lifetime/despawn bookkeeping. `this` is handed to the Projectile so it
+  // can call back into resolveProjectileHit below from its own fixedUpdate.
+  spawnProjectile(x, y, team, facing) {
+    const projectile = new Projectile(x, y, team, facing, this);
+    projectile.netId = this.game.net.spawn("projectile", projectile);
+    this.projectiles.push(projectile);
+  }
+
+  // Called by a Projectile's own fixedUpdate right after it integrates this
+  // tick's motion (see projectiles.js's Projectile.fixedUpdate and its class
+  // comment on why the check has to happen there, not from this Director's
+  // own fixedUpdate). Uses gamekit's Scene.overlapSwept — its swept (not just
+  // end-of-tick) hit test, same as CLAUDE.md calls out for projectile combat —
+  // since PROJECTILE_SPEED can otherwise step a Projectile clean over a thin
+  // Minion within one tick. Sweeps the whole scene rather than just
+  // minions/towers, same shape as _resolveMinionCombat's full-scene overlap;
+  // canHit filters out everything else (Characters, other Projectiles).
+  // Spent on its first hit, same one-shot rule as resolveStructureDamage's
+  // Minion attacks.
+  resolveProjectileHit(projectile) {
+    this.game.scene.overlapSwept(projectile, this.game.scene.root, (proj, target) => {
+      if (proj.spent || !canHit(proj, target)) return;
+      const { destroyed } = applyProjectileDamage(proj, target);
+      proj.spent = true;
+      if (destroyed) {
+        if (target instanceof Minion) this._killMinion(target);
+        else this.game.net.despawn(target.netId);
+      }
+    });
+  }
+
+  _despawnProjectiles() {
+    this.projectiles = this.projectiles.filter((p) => {
+      if (!p.spent && p.life > 0) return true;
+      this.game.net.despawn(p.netId);
+      return false;
+    });
+  }
 }
 
 // Builds and starts one ServerGame for a Room whose players are all ready,
@@ -200,13 +277,19 @@ function startMatch(room) {
           SPAWN_Y,
           player.team,
           player.character,
+          game,
         );
       },
     },
   );
 
   for (const player of players) game.accept(player.transport);
-  game.scene.add(new MinionDirector(game));
+  // Exposed on `game` so Character._firePrimary can reach it without a
+  // constructor-order dependency: createPlayer above runs during
+  // game.accept(), before this Director exists, but Character.fixedUpdate
+  // (where firing happens) only runs after game.start() below.
+  game.combatDirector = new MinionDirector(game);
+  game.scene.add(game.combatDirector);
   game.start();
 }
 

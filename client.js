@@ -18,6 +18,7 @@ import {
 } from "./shared.js";
 import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
 import { MINION_W, MINION_H } from "./minions.js";
+import { PROJECTILE_W, PROJECTILE_H } from "./projectiles.js";
 
 const canvas = document.getElementById("view");
 
@@ -261,11 +262,30 @@ function main() {
       }
     }
 
+    // Untextured Sprite → renders as a solid tinted box, same as MinionView.
+    // Not predicted (see projectiles.js's stepPrimaryAbility comment — only
+    // the dash Secondary Ability is client-predicted): NetClient interpolates
+    // it from the position the server broadcasts, like a Minion.
+    class ProjectileView extends Sprite {
+      constructor() {
+        super();
+        this.width = PROJECTILE_W;
+        this.height = PROJECTILE_H;
+      }
+
+      // Reads the payload the server's Projectile.netState() sends.
+      applyNetState(state) {
+        if (!state) return;
+        if (state.team !== undefined) this.tint = TEAM_COLORS[state.team];
+      }
+    }
+
     const factory = createEntityFactory({
       character: () => new CharacterView(),
       minion: () => new MinionView(),
       tower: () => new TowerView(),
       base: () => new BaseView(),
+      projectile: () => new ProjectileView(),
     });
 
     class WorldScene extends NetScene {
@@ -301,12 +321,16 @@ function main() {
       game.start();
     });
 
-    // Send input on change; prediction + sending happen each tick.
-    const input = { left: false, right: false, jump: false };
+    // Send input on change; prediction + sending happen each tick. `fire`
+    // isn't predicted (see ProjectileView above) — it's just relayed to the
+    // server, which edge-triggers/cooldown-gates it (see projectiles.js's
+    // stepPrimaryAbility) the same way `jump` is edge-triggered locally.
+    const input = { left: false, right: false, jump: false, fire: false };
     const KEYS = {
       ArrowLeft: "left", KeyA: "left",
       ArrowRight: "right", KeyD: "right",
       ArrowUp: "jump", KeyW: "jump", Space: "jump",
+      KeyF: "fire",
     };
     function setKey(e, down) {
       const dir = KEYS[e.code];
