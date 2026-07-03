@@ -38,6 +38,18 @@
       #player-list li.you { color: #4bd17c; }
       .picker { display: flex; gap: 8px; margin: 8px 0; }
       #ready-toggle { margin-top: 12px; }
+
+      #dev-panel { position: fixed; bottom: 12px; right: 12px; font: 13px system-ui, sans-serif; }
+      #dev-panel-tab {
+        cursor: pointer; background: #222; color: #ddd; border: 1px solid #444;
+        border-radius: 4px; padding: 4px 10px;
+      }
+      #dev-panel-body:not([hidden]) {
+        margin-bottom: 8px; padding: 10px; background: #1a1a1a; border: 1px solid #444;
+        border-radius: 4px; display: flex; flex-direction: column; gap: 8px;
+      }
+      #dev-panel-body button { cursor: pointer; }
+      #dev-panel-body button:disabled { cursor: default; opacity: 0.5; }
     </style>
   </head>
   <body>
@@ -61,6 +73,12 @@
     </div>
     <canvas id="view" hidden></canvas>
     <div id="hint" hidden>Arrows/WASD to move, Up/W/Space to jump &middot; open a second window to see it synced</div>
+    <div id="dev-panel" hidden>
+      <div id="dev-panel-body" hidden>
+        <button id="dev-panel-jump">Jump to Game</button>
+      </div>
+      <button id="dev-panel-tab">DEV</button>
+    </div>
     <div id="winner"></div>
     <script type="module" src="/client.js"></script>
   </body>
