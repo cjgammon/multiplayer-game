@@ -9,12 +9,13 @@
 import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-server";
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
-  TICK_RATE, PORT, TILE,
+  TICK_RATE, PORT, TILE, TEAMS,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS,
   stepCharacter,
 } from "./shared.js";
 import { getMap, buildMapData, worldSize } from "./maps.js";
 import { LobbyManager } from "./room.js";
+import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
 
 // Selects which Map to run — the client must be pointed at the same one
 // (its `?map=` query param) since both sides build the Tilemap locally.
@@ -59,6 +60,61 @@ class Character extends Entity {
   }
 }
 
+// Drives Minion waves and same-Lane combat for a Match, independent of any
+// connection — see acceptance criteria on #4 ("no player input required").
+// Not net.spawn'd itself (no visual representation to sync); startMatch below
+// adds one to each Match's Scene ahead of any Minion, so its fixedUpdate
+// (combat resolution, then spawning) always runs before theirs within the
+// same tick, letting a Minion's own fixedUpdate see this tick's `engaged`
+// flag the moment it's set.
+class MinionDirector extends Entity {
+  constructor(game) {
+    super();
+    this.game = game;
+    // One spawn countdown per Lane per Team, seeded at 0 so the first wave on
+    // each Lane appears immediately rather than after a full wait.
+    this.timers = map.lanes.map(() => Object.fromEntries(TEAMS.map((t) => [t, 0])));
+  }
+
+  fixedUpdate(dt) {
+    this._resolveCombat();
+    this._spawnWaves(dt);
+  }
+
+  // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
+  // (see maps.js's twinLanes) can put different Lanes' Minions in physical
+  // overlap, so laneIndex is checked (via canEngage) in addition to the AABB
+  // test itself.
+  _resolveCombat() {
+    this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
+      if (!canEngage(a, b)) return;
+      const { aDied, bDied } = resolveMinionCombat(a, b);
+      if (aDied) this.game.net.despawn(a.netId);
+      if (bDied) this.game.net.despawn(b.netId);
+    });
+  }
+
+  _spawnWaves(dt) {
+    map.lanes.forEach((lane, laneIndex) => {
+      for (const team of TEAMS) {
+        const remaining = this.timers[laneIndex][team] - dt;
+        if (remaining <= 0) {
+          this.timers[laneIndex][team] = remaining + MINION_SPAWN_INTERVAL;
+          this._spawn(lane, laneIndex, team);
+        } else {
+          this.timers[laneIndex][team] = remaining;
+        }
+      }
+    });
+  }
+
+  _spawn(lane, laneIndex, team) {
+    const [start, ...ahead] = laneWaypoints(lane, team);
+    const minion = new Minion(start.x, start.y, team, laneIndex, ahead, TEAM_COLORS[team]);
+    minion.netId = this.game.net.spawn("minion", minion);
+  }
+}
+
 // Builds and starts one ServerGame for a Room whose players are all ready,
 // then hands each player's already-open connection to it — the "connected
 // Character flow" from #1, entered once per Match instead of at process
@@ -85,6 +141,7 @@ function startMatch(room) {
   );
 
   for (const player of players) game.accept(player.transport);
+  game.scene.add(new MinionDirector(game));
   game.start();
 }
 
