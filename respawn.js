@@ -26,12 +26,31 @@ export function downCharacter(character) {
 /**
  * Where a Team's Character reappears: horizontally centered on its own
  * Team's Base, at the same SPAWN_Y the initial connect spawn uses (see
- * server.js's createPlayer) so it falls onto the Lane floor the same way —
- * Base is a positioned Entity (structures.js) but isn't part of the
- * Tilemap's solid collision itself.
+ * server.js's createPlayer, via teamSpawnPoint below) so it falls onto the
+ * Lane floor the same way — Base is a positioned Entity (structures.js) but
+ * isn't part of the Tilemap's solid collision itself. Only used for a single
+ * downed Character reviving alone, so it always lands dead-center — a Team
+ * spawning several Characters at once uses teamSpawnPoint instead.
  */
 export function respawnPoint(base, charWidth) {
   return { x: base.x + base.width / 2 - charWidth / 2, y: SPAWN_Y };
+}
+
+/**
+ * Where one of several Characters connecting to the same Team at once
+ * spawns (#11's up-to-3-per-Team lobby): spread evenly across the Team's own
+ * Base's width, centered as a group — unlike respawnPoint's single fixed
+ * point, so up to `teamSize` same-Team Characters don't render exactly
+ * stacked on each other at Match start. `indexOnTeam`/`teamSize` are this
+ * Character's position among, and count of, its own Team's players (see
+ * server.js's createPlayer). A solo Team (teamSize 1, matching earlier
+ * 1-2 player Matches) collapses to the same center point respawnPoint
+ * returns.
+ */
+export function teamSpawnPoint(base, charWidth, indexOnTeam, teamSize) {
+  const slotWidth = base.width / teamSize;
+  const offset = (indexOnTeam - (teamSize - 1) / 2) * slotWidth;
+  return { x: base.x + base.width / 2 - charWidth / 2 + offset, y: SPAWN_Y };
 }
 
 /**

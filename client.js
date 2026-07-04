@@ -13,7 +13,7 @@ import {
 } from "@cjgammon/gamekit/renderer";
 import {
   TICK_RATE, PORT, TILE,
-  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAMS, CHARACTERS, TEAM_COLORS,
+  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAMS, CHARACTERS, TEAM_COLORS, MAX_TEAM_SIZE,
   stepCharacter,
 } from "./shared.js";
 import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
@@ -161,7 +161,13 @@ function main() {
 
     const me = state.players.find((p) => p.id === state.you);
     for (const btn of teamPickerEl.children) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.team === me.team));
+      const onThisTeam = btn.dataset.team === me.team;
+      btn.setAttribute("aria-pressed", String(onThisTeam));
+      // A Team the server would reject (room.js's MAX_TEAM_SIZE) is disabled
+      // here too, except the one `me` is already on — switching within your
+      // own (now-full) Team must stay a no-op, not a blocked action.
+      const teamCount = state.players.filter((p) => p.team === btn.dataset.team).length;
+      btn.disabled = !onThisTeam && teamCount >= MAX_TEAM_SIZE;
     }
     for (const btn of characterPickerEl.children) {
       btn.setAttribute("aria-pressed", String(btn.dataset.character === me.character));
