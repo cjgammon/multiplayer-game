@@ -41,7 +41,7 @@ export const PROJECTILE_LIFETIME = 1.2; // seconds before despawning unspent
  * applyProjectileDamage).
  */
 export class Projectile extends Entity {
-  constructor(x, y, team, facing, director) {
+  constructor(x, y, team, facing, director, damageMultiplier = 1) {
     super(x, y);
     this.width = PROJECTILE_W;
     this.height = PROJECTILE_H;
@@ -49,6 +49,13 @@ export class Projectile extends Entity {
     this.velocity.set(facing * PROJECTILE_SPEED, 0);
     this.life = PROJECTILE_LIFETIME;
     this.director = director;
+    // Captured from the firing Character at spawn time (see server.js's
+    // KITS.fire) — a damage Upgrade bought after this Projectile is already
+    // in flight shouldn't retroactively change it, matching how melee.js's
+    // applyMeleeDamage reads the attacker's multiplier live at swing time
+    // (a swing resolves instantly, so "live" and "at spawn time" coincide
+    // there; a Projectile's flight is the one place the distinction matters).
+    this.damageMultiplier = damageMultiplier;
     // Set once a hit is resolved — marks it for despawn next sweep without
     // mutating `life` (which only tracks lifetime expiry).
     this.spent = false;
@@ -87,6 +94,6 @@ export function canHit(projectile, target) {
  * caller marks via `projectile.spent = true`.
  */
 export function applyProjectileDamage(projectile, target) {
-  target.hp -= PROJECTILE_DAMAGE;
+  target.hp -= PROJECTILE_DAMAGE * (projectile.damageMultiplier ?? 1);
   return { destroyed: target.hp <= 0 };
 }

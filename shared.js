@@ -109,7 +109,12 @@ export function stepCharacter(entity, input, dt, tilemap) {
     entity.velocity.set(entity.facing * DASH_SPEED, 0);
   } else {
     entity.drag.x = DRAG_X;
-    entity.maxVelocity.x = MAX_VEL_X;
+    // Scaled by a bought speed Upgrade (see solar.js's UPGRADES), defaulting
+    // to 1 for entities that never carry the field (e.g. this file's own
+    // tests) — must apply here, not just once at purchase time, since
+    // Entity's own accel->drag->maxVelocity clamp step re-reads
+    // maxVelocity.x every tick.
+    entity.maxVelocity.x = MAX_VEL_X * (entity.speedMultiplier ?? 1);
     entity.acceleration.x = 0;
     if (input.left) entity.acceleration.x -= RUN_ACCEL;
     if (input.right) entity.acceleration.x += RUN_ACCEL;

@@ -13,8 +13,10 @@ import {
 
 const [TEAM_A, TEAM_B] = TEAMS;
 
-function attacker({ x = 0, y = 0, width = 14, height = 20, team = TEAM_A, facing = 1 } = {}) {
-  return { x, y, width, height, team, facing, hp: 100, character: "brawler" };
+function attacker({
+  x = 0, y = 0, width = 14, height = 20, team = TEAM_A, facing = 1, damageMultiplier = 1,
+} = {}) {
+  return { x, y, width, height, team, facing, hp: 100, character: "brawler", damageMultiplier };
 }
 
 describe("meleeHitbox", () => {
@@ -97,7 +99,7 @@ describe("canHitMelee", () => {
 describe("applyMeleeDamage", () => {
   test("damages the target and reports it survives above zero hp", () => {
     const m = new Minion(0, 0, TEAM_B, 0, [], 0xffffff);
-    const { destroyed } = applyMeleeDamage(m);
+    const { destroyed } = applyMeleeDamage(attacker(), m);
     expect(m.hp).toBe(MINION_HP - MELEE_DAMAGE);
     expect(destroyed).toBe(false);
   });
@@ -105,8 +107,15 @@ describe("applyMeleeDamage", () => {
   test("reports destroyed once hp drops to or below zero", () => {
     const tower = new Tower(0, 0, 32, 32, 0);
     tower.hp = MELEE_DAMAGE; // exactly lethal from this hit
-    const { destroyed } = applyMeleeDamage(tower);
+    const { destroyed } = applyMeleeDamage(attacker(), tower);
     expect(tower.hp).toBeLessThanOrEqual(0);
     expect(destroyed).toBe(true);
+  });
+
+  test("scales damage by the attacker's damage Upgrade multiplier", () => {
+    const m = new Minion(0, 0, TEAM_B, 0, [], 0xffffff);
+    const { destroyed } = applyMeleeDamage(attacker({ damageMultiplier: 2 }), m);
+    expect(m.hp).toBe(MINION_HP - MELEE_DAMAGE * 2);
+    expect(destroyed).toBe(false);
   });
 });

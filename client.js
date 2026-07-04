@@ -20,6 +20,7 @@ import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } f
 import { MINION_W, MINION_H } from "./minions.js";
 import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "./projectiles.js";
 import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_COOLDOWN } from "./melee.js";
+import { SOLAR_PICKUP_SIZE } from "./solar.js";
 
 const canvas = document.getElementById("view");
 
@@ -74,6 +75,8 @@ function main() {
   const readyToggle = document.getElementById("ready-toggle");
   const roomError = document.getElementById("room-error");
   const hintEl = document.getElementById("hint");
+  const solarEl = document.getElementById("solar");
+  const solarAmountEl = document.getElementById("solar-amount");
   const hpHudEl = document.getElementById("hp-hud");
 
   let ws = null;
@@ -236,6 +239,7 @@ function main() {
     lobbyEl.hidden = true;
     canvas.hidden = false;
     hintEl.hidden = false;
+    solarEl.hidden = false;
     hpHudEl.hidden = false;
     if (devPanelJumpBtn) devPanelJumpBtn.disabled = true;
 
@@ -261,6 +265,11 @@ function main() {
       facing = 1;
       dashCooldown = 0;
       dashTimer = 0;
+      // Solar economy (see #10): speedMultiplier is read by stepCharacter
+      // during prediction/replay, same reason dash* round-trips above; solar
+      // is display-only (read by the HUD update in WorldScene.update below).
+      speedMultiplier = 1;
+      solar = 0;
       // Downed (#9) — mirrors server.js's Character field so the `simulate`
       // callback below can skip predicting movement for a Character that's
       // out of play, same as the server's Character.fixedUpdate does.
@@ -292,6 +301,8 @@ function main() {
         if (state.prevDash !== undefined) this._prevDash = state.prevDash;
         if (state.dashCooldown !== undefined) this.dashCooldown = state.dashCooldown;
         if (state.dashTimer !== undefined) this.dashTimer = state.dashTimer;
+        if (state.speedMultiplier !== undefined) this.speedMultiplier = state.speedMultiplier;
+        if (state.solar !== undefined) this.solar = state.solar;
         // Downed (#9): hidden rather than despawned — the server keeps
         // simulating/networking the same entity through its respawn timer
         // (see respawn.js's header comment on why), so `visible` (respected
@@ -369,12 +380,27 @@ function main() {
       }
     }
 
+    // Untextured Sprite → renders as a solid tinted box, same as MinionView.
+    // Not predicted (no player drives a pickup, and collecting one has no
+    // latency-sensitive feedback that needs prediction — see solar.js's
+    // header comment): NetClient interpolates it like any other remote
+    // entity.
+    class SolarPickupView extends Sprite {
+      constructor() {
+        super();
+        this.width = SOLAR_PICKUP_SIZE;
+        this.height = SOLAR_PICKUP_SIZE;
+        this.tint = 0xffd700;
+      }
+    }
+
     const factory = createEntityFactory({
       character: () => new CharacterView(),
       minion: () => new MinionView(),
       tower: () => new TowerView(),
       base: () => new BaseView(),
       projectile: () => new ProjectileView(),
+      solar: () => new SolarPickupView(),
     });
 
     class WorldScene extends NetScene {
@@ -385,18 +411,20 @@ function main() {
 
       update(dt) {
         super.update(dt);
+        const local = this.client.entities.get(this.client.you);
+        if (!local) return;
         // Start following the local Character as soon as it's spawned.
         // (gamekit 0.2.0 predicts the local player in Scene's preCamera seam,
         // before the camera follows, and spawns it with interpolate = true —
         // no app-side workaround needed for either anymore.)
         if (!this._following) {
-          const local = this.client.entities.get(this.client.you);
-          if (local) {
-            this.camera.follow(local, 0.2);
-            this.camera.snapToTarget();
-            this._following = true;
-          }
+          this.camera.follow(local, 0.2);
+          this.camera.snapToTarget();
+          this._following = true;
         }
+        // Solar HUD (see #10) — display-only, driven straight off the local
+        // Character's synced `solar` field (see CharacterView.applyNetState).
+        solarAmountEl.textContent = local.solar;
         updateHpHud(this.client);
       }
     }
@@ -436,7 +464,7 @@ function main() {
     // isn't predicted (see ProjectileView above) — it's just relayed to the
     // server, which edge-triggers/cooldown-gates it (see projectiles.js's
     // stepPrimaryAbility) the same way `jump` is edge-triggered locally.
-    const input = { left: false, right: false, jump: false, fire: false, dash: false };
+    const input = { left: false, right: false, jump: false, fire: false, dash: false, buyUpgrade: null };
     // Tracks the last movement direction, mirroring server.js's
     // Character.facing purely locally — used only to place the muzzle flash
     // below on the correct side; the server derives its own copy the same
@@ -508,21 +536,36 @@ function main() {
       KeyF: "fire",
       ShiftLeft: "dash", ShiftRight: "dash",
     };
+    // Upgrade purchase requests (see #10) — a one-shot action like `fire`,
+    // not a held movement direction, so it's relayed as an id string rather
+    // than added to KEYS' boolean shape; the server edge-triggers it the
+    // same way (see server.js's Character.fixedUpdate).
+    const UPGRADE_KEYS = { KeyE: "damage", KeyR: "speed" };
     function setKey(e, down) {
       const dir = KEYS[e.code];
-      if (!dir || input[dir] === down) return;
-      input[dir] = down;
-      if (down && dir === "left") localFacing = -1;
-      if (down && dir === "right") localFacing = 1;
-      if (down && dir === "fire") {
-        const now = performance.now();
-        if (now >= nextFlashReadyAt) {
-          nextFlashReadyAt = now + (isMelee ? MELEE_COOLDOWN : PROJECTILE_COOLDOWN) * 1000;
-          if (isMelee) spawnMeleeFlash(localFacing);
-          else spawnMuzzleFlash(localFacing);
+      if (dir) {
+        if (input[dir] === down) return;
+        input[dir] = down;
+        if (down && dir === "left") localFacing = -1;
+        if (down && dir === "right") localFacing = 1;
+        if (down && dir === "fire") {
+          const now = performance.now();
+          if (now >= nextFlashReadyAt) {
+            nextFlashReadyAt = now + (isMelee ? MELEE_COOLDOWN : PROJECTILE_COOLDOWN) * 1000;
+            if (isMelee) spawnMeleeFlash(localFacing);
+            else spawnMuzzleFlash(localFacing);
+          }
         }
+        scene.client.setLocalInput(input); // predicted + sent automatically
+        e.preventDefault();
+        return;
       }
-      scene.client.setLocalInput(input); // predicted + sent automatically
+
+      const upgradeId = UPGRADE_KEYS[e.code];
+      if (!upgradeId) return;
+      if (down) input.buyUpgrade = upgradeId;
+      else if (input.buyUpgrade === upgradeId) input.buyUpgrade = null;
+      scene.client.setLocalInput(input);
       e.preventDefault();
     }
     window.addEventListener("keydown", (e) => setKey(e, true));
