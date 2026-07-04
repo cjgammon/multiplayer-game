@@ -26,6 +26,10 @@ import {
   MELEE_COOLDOWN,
   meleeHitbox, canHitMelee, applyMeleeDamage,
 } from "./melee.js";
+import {
+  SolarPickup, SOLAR_PER_MINION,
+  canCollect, resolveCollect, canPurchaseUpgrade, resolvePurchaseUpgrade,
+} from "./solar.js";
 
 // One entry per shared.js's CHARACTERS id: each kit's Primary Ability
 // cooldown and its fire effect. The two kits' Primary Abilities otherwise
@@ -47,7 +51,9 @@ const KITS = {
         ? character.x + character.width
         : character.x - PROJECTILE_W;
       const y = character.y + character.height / 2 - PROJECTILE_H / 2;
-      character.game.combatDirector.spawnProjectile(x, y, character.team, character.facing);
+      character.game.combatDirector.spawnProjectile(
+        x, y, character.team, character.facing, character.damageMultiplier,
+      );
     },
   },
   [CHARACTERS[1].id]: {
@@ -69,7 +75,7 @@ const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
 
 class Character extends Entity {
   // The server sets this from the client's latest input each tick.
-  input = { left: false, right: false, jump: false, fire: false, dash: false };
+  input = { left: false, right: false, jump: false, fire: false, dash: false, buyUpgrade: null };
   // Last non-neutral horizontal input direction — where the Primary Ability
   // fires (see projectiles.js's stepPrimaryAbility) and which way the dash
   // Secondary Ability launches (see shared.js's stepCharacter). Defaults to
@@ -84,6 +90,20 @@ class Character extends Entity {
   // Server-authoritative only (see shared.js's CHAR_HP) — not predicted or
   // netState'd, same as Minion/Tower/Base hp.
   hp = CHAR_HP;
+  // Solar economy (see solar.js and #10's acceptance criteria): a running
+  // total of Solar collected from SolarPickups, which upgradeId Upgrades
+  // have already been bought this Match (so each can only be bought once),
+  // and the stat multipliers those Upgrades apply. Server-authoritative
+  // only, same as hp — damageMultiplier is read by melee.js's
+  // applyMeleeDamage / this file's KITS[0].fire (server-only, so it never
+  // needs to round-trip to the client); speedMultiplier is read by
+  // shared.js's stepCharacter, which the client also runs for prediction,
+  // so it (like grounded/prevJump) must round-trip through
+  // netState()/applyNetState() below.
+  solar = 0;
+  upgrades = {};
+  damageMultiplier = 1;
+  speedMultiplier = 1;
 
   constructor(x, y, team, character, game) {
     super(x, y);
@@ -99,11 +119,19 @@ class Character extends Entity {
   }
 
   // The authoritative simulation: gravity, run, jump, tilemap collision, then
-  // the Primary Ability's cooldown/facing/fire-edge state (see #6) and its
-  // kit-specific effect (see the KITS table above).
+  // the Primary Ability's cooldown/facing/fire-edge state (see #6), its
+  // kit-specific effect (see the KITS table above), and an Upgrade purchase
+  // request (see #10) — edge-triggered the same way stepPrimaryAbility
+  // edge-triggers `fire`, since a purchase is a one-shot action like firing,
+  // not continuously-held movement input.
   fixedUpdate(dt) {
     stepCharacter(this, this.input, dt, tilemap);
     if (stepPrimaryAbility(this, this.input, dt, this.kit.cooldown)) this.kit.fire(this);
+    const upgradeId = this.input.buyUpgrade;
+    if (upgradeId && upgradeId !== this._prevBuyUpgrade) {
+      this.game.combatDirector.tryPurchaseUpgrade(this, upgradeId);
+    }
+    this._prevBuyUpgrade = upgradeId;
   }
 
   // Per-entity payload the client reads via CharacterView.applyNetState.
@@ -112,7 +140,13 @@ class Character extends Entity {
   // carries vx/vy), but grounded/prevJump are app-specific jump-edge state
   // the engine doesn't know about — stale values here let a replayed tick
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
-  // replay (see SimulateFn's doc comment in gamekit).
+  // replay (see SimulateFn's doc comment in gamekit). speedMultiplier is
+  // included for the same reason: shared.js's stepCharacter (the replayed
+  // function) reads it, so a stale local value would replay at the wrong
+  // speed. `solar` is included purely for HUD display — not read by any
+  // predicted/replayed logic. damageMultiplier is deliberately omitted:
+  // it's only read server-side (melee.js's applyMeleeDamage, this file's
+  // KITS[0].fire), so the client never needs a copy.
   netState() {
     return {
       color: this.color,
@@ -123,6 +157,8 @@ class Character extends Entity {
       prevDash: this._prevDash,
       dashCooldown: this.dashCooldown,
       dashTimer: this.dashTimer,
+      solar: this.solar,
+      speedMultiplier: this.speedMultiplier,
     };
   }
 }
@@ -174,6 +210,7 @@ class MinionDirector extends Entity {
   fixedUpdate(dt) {
     if (this.winner !== null) return; // Match over.
     this._resolveCombat();
+    this._resolveSolarCollection();
     this._spawnWaves(dt);
     // Projectiles resolve their own hits (see resolveProjectileHit below and
     // projectiles.js's comment on why) as part of their own fixedUpdate later
@@ -185,6 +222,42 @@ class MinionDirector extends Entity {
   _resolveCombat() {
     this._resolveMinionCombat();
     this._resolveStructureDamage();
+  }
+
+  // Credits any Character overlapping a live SolarPickup (see solar.js) and
+  // despawns it — same full-scene overlap shape as _resolveMinionCombat,
+  // just Character-vs-pickup instead of Minion-vs-Minion. `pickup.collected`
+  // (checked by canCollect) guards the same same-pass double-resolution race
+  // canEngage's hp>0 check guards for Minion combat — see solar.js's
+  // SolarPickup class comment.
+  _resolveSolarCollection() {
+    this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
+      const [character, pickup] = a instanceof SolarPickup ? [b, a] : [a, b];
+      if (!(pickup instanceof SolarPickup) || !(character instanceof Character)) return;
+      if (!canCollect(character, pickup)) return;
+      resolveCollect(character, pickup);
+      this.game.net.despawn(pickup.netId);
+    });
+  }
+
+  // Spawns a collectible SolarPickup at a defeated Minion's (or, once #9
+  // lands, a defeated Character's) death location — see _killMinion below.
+  dropSolar(x, y, amount) {
+    const pickup = new SolarPickup(x, y, amount);
+    pickup.netId = this.game.net.spawn("solar", pickup);
+    return pickup;
+  }
+
+  // Resolves a Character's Upgrade purchase request (see Character.fixedUpdate
+  // above): finds that Character's own Team's Base and hands off to solar.js's
+  // canPurchaseUpgrade/resolvePurchaseUpgrade, the same
+  // check-then-resolve shape resolveMeleeSwing/resolveProjectileHit use for
+  // combat. A no-op if the Character isn't at their own Base, can't afford
+  // it, or already bought it this Match.
+  tryPurchaseUpgrade(character, upgradeId) {
+    const base = this.bases.find((b) => b.team === character.team);
+    if (!base || !canPurchaseUpgrade(character, base, upgradeId)) return;
+    resolvePurchaseUpgrade(character, upgradeId);
   }
 
   // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
@@ -252,6 +325,7 @@ class MinionDirector extends Entity {
   }
 
   _killMinion(minion) {
+    this.dropSolar(minion.x, minion.y, SOLAR_PER_MINION);
     this.game.net.despawn(minion.netId);
     const index = this.minions.indexOf(minion);
     if (index !== -1) this.minions.splice(index, 1);
@@ -263,8 +337,8 @@ class MinionDirector extends Entity {
   // Character net.spawn'ing directly, so it joins `this.projectiles` for
   // lifetime/despawn bookkeeping. `this` is handed to the Projectile so it
   // can call back into resolveProjectileHit below from its own fixedUpdate.
-  spawnProjectile(x, y, team, facing) {
-    const projectile = new Projectile(x, y, team, facing, this);
+  spawnProjectile(x, y, team, facing, damageMultiplier) {
+    const projectile = new Projectile(x, y, team, facing, this, damageMultiplier);
     projectile.netId = this.game.net.spawn("projectile", projectile);
     this.projectiles.push(projectile);
   }
@@ -303,7 +377,7 @@ class MinionDirector extends Entity {
     const hitbox = meleeHitbox(character);
     this.game.scene.overlap(hitbox, this.game.scene.root, (_hitbox, target) => {
       if (!canHitMelee(character, target)) return;
-      const { destroyed } = applyMeleeDamage(target);
+      const { destroyed } = applyMeleeDamage(character, target);
       if (!destroyed) return;
       if (target instanceof Minion) this._killMinion(target);
       else if (target instanceof Tower) this.game.net.despawn(target.netId);

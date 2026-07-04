@@ -62,13 +62,14 @@ export function canHitMelee(attacker, target) {
 
 /**
  * Resolve a melee swing hitting an eligible target (already confirmed via
- * canHitMelee by the caller): damages the target for MELEE_DAMAGE and
+ * canHitMelee by the caller): damages the target for MELEE_DAMAGE (scaled by
+ * `attacker`'s damage Upgrade, if bought — see solar.js's UPGRADES) and
  * reports whether it died. Unlike a Projectile, a swing isn't "spent" on a
  * hit — the caller's `scene.overlap` naturally lets one swing damage
  * everything overlapping its hitbox, a short-range cleave rather than a
  * single-target shot.
  */
-export function applyMeleeDamage(target) {
-  target.hp -= MELEE_DAMAGE;
+export function applyMeleeDamage(attacker, target) {
+  target.hp -= MELEE_DAMAGE * (attacker.damageMultiplier ?? 1);
   return { destroyed: target.hp <= 0 };
 }

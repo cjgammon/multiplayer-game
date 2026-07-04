@@ -47,6 +47,13 @@ describe("Projectile movement", () => {
     expect(p.spent).toBe(false);
   });
 
+  test("defaults damageMultiplier to 1, or captures the one passed at spawn time", () => {
+    const p = new Projectile(0, 0, TEAM_A, 1, stubDirector());
+    expect(p.damageMultiplier).toBe(1);
+    const boosted = new Projectile(0, 0, TEAM_A, 1, stubDirector(), 1.5);
+    expect(boosted.damageMultiplier).toBe(1.5);
+  });
+
   test("asks its director to resolve a hit after moving, unless already spent", () => {
     const calls = [];
     const director = { resolveProjectileHit: (p) => calls.push(p) };
@@ -112,5 +119,12 @@ describe("applyProjectileDamage", () => {
     const { destroyed } = applyProjectileDamage({}, tower);
     expect(tower.hp).toBeLessThanOrEqual(0);
     expect(destroyed).toBe(true);
+  });
+
+  test("scales damage by the firing Character's damage Upgrade multiplier, captured at spawn time", () => {
+    const m = new Minion(0, 0, TEAM_B, 0, [], 0xffffff);
+    const { destroyed } = applyProjectileDamage({ damageMultiplier: 2 }, m);
+    expect(m.hp).toBe(MINION_HP - PROJECTILE_DAMAGE * 2);
+    expect(destroyed).toBe(false);
   });
 });

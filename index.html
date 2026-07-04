@@ -24,6 +24,10 @@
         text-align: center; color: #fff; font: bold 28px system-ui, sans-serif;
         display: none;
       }
+      #solar {
+        position: fixed; top: 12px; left: 12px;
+        color: #ffd700; font: bold 16px system-ui, sans-serif;
+      }
 
       #lobby { width: 360px; }
       #lobby button { cursor: pointer; }
@@ -72,7 +76,8 @@
       </div>
     </div>
     <canvas id="view" hidden></canvas>
-    <div id="hint" hidden>Arrows/WASD to move, Up/W/Space to jump, F to fire, Shift to dash &middot; open a second window to see it synced</div>
+    <div id="hint" hidden>Arrows/WASD to move, Up/W/Space to jump, F to fire, Shift to dash, E/R to buy a damage/speed Upgrade at your own Base &middot; open a second window to see it synced</div>
+    <div id="solar" hidden>Solar: <span id="solar-amount">0</span></div>
     <div id="dev-panel" hidden>
       <div id="dev-panel-body" hidden>
         <button id="dev-panel-jump">Jump to Game</button>

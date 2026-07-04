@@ -58,6 +58,23 @@ describe("stepCharacter facing", () => {
   });
 });
 
+describe("stepCharacter speed Upgrade", () => {
+  test("scales normal run speed by speedMultiplier", () => {
+    const tilemap = makeTilemap();
+    const e = makeCharacter(TILE * 5, 0);
+    e.speedMultiplier = 2;
+    stepCharacter(e, { ...NO_INPUT, right: true }, 5, tilemap); // long enough to hit the clamp
+    expect(e.velocity.x).toBeCloseTo(MAX_VEL_X * 2, 5);
+  });
+
+  test("defaults to normal MAX_VEL_X when speedMultiplier is unset", () => {
+    const tilemap = makeTilemap();
+    const e = makeCharacter(TILE * 5, 0);
+    stepCharacter(e, { ...NO_INPUT, right: true }, 5, tilemap);
+    expect(e.velocity.x).toBeCloseTo(MAX_VEL_X, 5);
+  });
+});
+
 describe("stepCharacter dash", () => {
   test("does nothing without dash input", () => {
     const tilemap = makeTilemap();
