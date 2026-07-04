@@ -13,8 +13,9 @@
 // Damages enemy Minions, (neutral) Towers, and enemy Characters — the first
 // Ability in this app to reach Characters at all (projectiles.js's canHit
 // deliberately doesn't; see its header comment), matching #8's acceptance
-// criteria. A Character reaching 0 hp here is left as-is: death/respawn
-// handling is #9's scope, not this one's.
+// criteria. A Character reaching 0 hp here is downed by the caller (#9, see
+// server.js's MinionDirector.resolveMeleeSwing and respawn.js) — this module
+// only applies the damage and reports the death, not the respawn response.
 import { Entity } from "@cjgammon/gamekit";
 import { Minion } from "./minions.js";
 import { Tower } from "./structures.js";

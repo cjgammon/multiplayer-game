@@ -259,6 +259,10 @@ function main() {
       facing = 1;
       dashCooldown = 0;
       dashTimer = 0;
+      // Downed (#9) — mirrors server.js's Character field so the `simulate`
+      // callback below can skip predicting movement for a Character that's
+      // out of play, same as the server's Character.fixedUpdate does.
+      downed = false;
 
       constructor() {
         super();
@@ -283,6 +287,17 @@ function main() {
         if (state.prevDash !== undefined) this._prevDash = state.prevDash;
         if (state.dashCooldown !== undefined) this.dashCooldown = state.dashCooldown;
         if (state.dashTimer !== undefined) this.dashTimer = state.dashTimer;
+        // Downed (#9): hidden rather than despawned — the server keeps
+        // simulating/networking the same entity through its respawn timer
+        // (see respawn.js's header comment on why), so `visible` (respected
+        // by gamekit's SceneWalker) is the seam to hide it without touching
+        // `alive`. Also read by the `simulate` callback below, so the local
+        // player's own prediction freezes the same way the server's
+        // Character.fixedUpdate does instead of drifting a hidden entity.
+        if (state.downed !== undefined) {
+          this.downed = state.downed;
+          this.visible = !state.downed;
+        }
       }
     }
 
@@ -381,7 +396,14 @@ function main() {
 
     const scene = new WorldScene(transport, factory, {
       // Predict OUR Character by running the SAME movement the server runs.
-      simulate: (entity, input, dt) => stepCharacter(entity, input, dt, tilemap),
+      // Skips prediction while downed (#9), mirroring the server's
+      // Character.fixedUpdate guard — otherwise the local (hidden) entity
+      // would keep drifting from replayed input during the respawn timer,
+      // dragging the camera (which follows this same entity) along with it.
+      simulate: (entity, input, dt) => {
+        if (entity.downed) return;
+        stepCharacter(entity, input, dt, tilemap);
+      },
     });
 
     RenderGame.create(canvas, { fov: WORLD_W, tickRate: TICK_RATE }).then((game) => {

@@ -26,6 +26,7 @@ import {
   MELEE_COOLDOWN,
   meleeHitbox, canHitMelee, applyMeleeDamage,
 } from "./melee.js";
+import { downCharacter, stepRespawn } from "./respawn.js";
 
 // One entry per shared.js's CHARACTERS id: each kit's Primary Ability
 // cooldown and its fire effect. The two kits' Primary Abilities otherwise
@@ -84,6 +85,12 @@ class Character extends Entity {
   // Server-authoritative only (see shared.js's CHAR_HP) — not predicted or
   // netState'd, same as Minion/Tower/Base hp.
   hp = CHAR_HP;
+  // Death/respawn (#9) — set by respawn.js's downCharacter once melee.js's
+  // swing brings hp to 0 (see MinionDirector.resolveMeleeSwing below).
+  // `downed` is netState'd (below) so the client can hide the sprite; the
+  // countdown itself is server-authoritative only, same as hp.
+  downed = false;
+  respawnTimer = 0;
 
   constructor(x, y, team, character, game) {
     super(x, y);
@@ -100,8 +107,16 @@ class Character extends Entity {
 
   // The authoritative simulation: gravity, run, jump, tilemap collision, then
   // the Primary Ability's cooldown/facing/fire-edge state (see #6) and its
-  // kit-specific effect (see the KITS table above).
+  // kit-specific effect (see the KITS table above). While downed (#9), skips
+  // all of that — no input-driven movement or firing — and just counts down
+  // the respawn timer instead, so a dead Character is removed from play
+  // in-place rather than lingering (see respawn.js's header comment on why
+  // this can't be a real net.spawn/despawn round-trip).
   fixedUpdate(dt) {
+    if (this.downed) {
+      stepRespawn(this, dt, this.game.combatDirector.baseForTeam(this.team));
+      return;
+    }
     stepCharacter(this, this.input, dt, tilemap);
     if (stepPrimaryAbility(this, this.input, dt, this.kit.cooldown)) this.kit.fire(this);
   }
@@ -112,7 +127,8 @@ class Character extends Entity {
   // carries vx/vy), but grounded/prevJump are app-specific jump-edge state
   // the engine doesn't know about — stale values here let a replayed tick
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
-  // replay (see SimulateFn's doc comment in gamekit).
+  // replay (see SimulateFn's doc comment in gamekit). `downed` (#9) lets the
+  // client hide the sprite while it's out of play.
   netState() {
     return {
       color: this.color,
@@ -123,6 +139,7 @@ class Character extends Entity {
       prevDash: this._prevDash,
       dashCooldown: this.dashCooldown,
       dashTimer: this.dashTimer,
+      downed: this.downed,
     };
   }
 }
@@ -257,6 +274,14 @@ class MinionDirector extends Entity {
     if (index !== -1) this.minions.splice(index, 1);
   }
 
+  // A Team's own Base, for a downed Character to respawn at (see #9's
+  // Character.fixedUpdate) — named accessor rather than reaching into
+  // `this.bases` directly, same shape as spawnProjectile/resolveMeleeSwing
+  // below.
+  baseForTeam(team) {
+    return this.bases.find((b) => b.team === team);
+  }
+
   // Spawns and tracks a Character's Primary Ability Projectile — called by
   // Character._firePrimary via `game.combatDirector` (see startMatch, which
   // assigns this Director there right after constructing it) rather than the
@@ -297,8 +322,10 @@ class MinionDirector extends Entity {
   // lifetime to track, just one immediate scene.overlap against a hitbox in
   // front of `character` (see melee.js's meleeHitbox). Sweeps the whole scene
   // same as _resolveMinionCombat/resolveProjectileHit; canHitMelee filters to
-  // enemy Minions/Towers/Characters. A Character reaching 0 hp is left as-is
-  // — see melee.js's header comment on why (death/respawn is #9's scope).
+  // enemy Minions/Towers/Characters. A Character reaching 0 hp is downed (#9,
+  // see respawn.js's downCharacter) rather than despawned — identified
+  // structurally by its `character` field, same as canHitMelee does, since
+  // Character isn't importable here without a cycle back to this module.
   resolveMeleeSwing(character) {
     const hitbox = meleeHitbox(character);
     this.game.scene.overlap(hitbox, this.game.scene.root, (_hitbox, target) => {
@@ -307,6 +334,7 @@ class MinionDirector extends Entity {
       if (!destroyed) return;
       if (target instanceof Minion) this._killMinion(target);
       else if (target instanceof Tower) this.game.net.despawn(target.netId);
+      else if (target.character !== undefined) downCharacter(target);
     });
   }
 
