@@ -6,7 +6,8 @@
 // here. Like Minion, neither is predicted client-side, so this only needs to
 // run in the server's authoritative fixedUpdate.
 import { Entity } from "@cjgammon/gamekit";
-import { Minion, MINION_DAMAGE, MINION_ATTACK_INTERVAL } from "./minions.js";
+import { Minion, MINION_DAMAGE, MINION_ATTACK_INTERVAL } from "../shared/minions.js";
+import { pickNetState, BASE_STATE } from "../shared/protocol.js";
 
 export const TOWER_HP = 300;
 export const BASE_HP = 500;
@@ -42,9 +43,10 @@ export class Base extends Entity {
     this.hp = BASE_HP;
   }
 
-  // Per-entity payload the client reads via BaseView.applyNetState.
+  // Per-entity payload the client reads via BaseView.applyNetState — see
+  // protocol.js's BASE_STATE for the field list.
   netState() {
-    return { team: this.team };
+    return pickNetState(this, BASE_STATE);
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { getMap } from "../maps.js";
-import { TILE, TEAMS } from "../shared.js";
+import { getMap } from "./maps.js";
+import { TILE, TEAMS } from "./shared.js";
 import {
   Minion,
   canEngage,
@@ -11,7 +11,7 @@ import {
   MINION_DAMAGE,
   MINION_ATTACK_INTERVAL,
   MINION_SPEED,
-} from "../minions.js";
+} from "./minions.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 

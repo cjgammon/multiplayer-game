@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { TEAMS } from "../shared.js";
-import { Minion, MINION_HP, MINION_DAMAGE, MINION_ATTACK_INTERVAL } from "../minions.js";
+import { TEAMS } from "../shared/shared.js";
+import { Minion, MINION_HP, MINION_DAMAGE, MINION_ATTACK_INTERVAL } from "../shared/minions.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 import {
@@ -11,7 +11,7 @@ import {
   canEngageTower,
   canEngageBase,
   resolveStructureDamage,
-} from "../structures.js";
+} from "./structures.js";
 
 function minion(team, laneIndex, x = 0) {
   return new Minion(x, 0, team, laneIndex, [], 0xffffff);

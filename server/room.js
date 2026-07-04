@@ -3,6 +3,7 @@
 // code entry, Team + Character select, and ready-up; LobbyManager owns the
 // set of open Rooms and speaks the JSON lobby protocol over each connection's
 // Transport until that connection is handed off to a per-Match ServerGame.
+import { MSG } from "../shared/protocol.js";
 
 const ROOM_CODE_LENGTH = 4;
 // Excludes visually ambiguous characters (0/O, 1/I/L).
@@ -51,7 +52,7 @@ class Room {
 
   toState(forId) {
     return {
-      k: "room-state",
+      k: MSG.ROOM_STATE,
       code: this.code,
       you: forId,
       players: this.playerOrder.map((id) => {
@@ -93,7 +94,7 @@ export class LobbyManager {
           p.transport.onMessage.remove(listener);
           this._listeners.delete(p.transport);
         }
-        send(p.transport, { k: "match-start" });
+        send(p.transport, { k: MSG.MATCH_START });
       }
       this._onMatchStart(room);
     };
@@ -106,7 +107,7 @@ export class LobbyManager {
         return; // ignore malformed lobby messages
       }
 
-      if (msg.k === "create-room") {
+      if (msg.k === MSG.CREATE_ROOM) {
         if (room) return; // already in a room
         playerId = this._nextPlayerId++;
         const code = generateRoomCode(new Set(this._rooms.keys()));
@@ -117,11 +118,11 @@ export class LobbyManager {
         return;
       }
 
-      if (msg.k === "join-room") {
+      if (msg.k === MSG.JOIN_ROOM) {
         if (room) return; // already in a room
         const target = this._rooms.get(msg.code);
         if (!target || target.started) {
-          send(transport, { k: "error", message: "Room not found." });
+          send(transport, { k: MSG.ERROR, message: "Room not found." });
           return;
         }
         playerId = this._nextPlayerId++;
@@ -134,23 +135,23 @@ export class LobbyManager {
       if (!room || room.started) return;
       const me = room.players.get(playerId);
 
-      if (msg.k === "pick-team") {
+      if (msg.k === MSG.PICK_TEAM) {
         me.team = msg.team;
         me.ready = false; // re-confirm readiness against the new choice
         broadcast();
         return;
       }
 
-      if (msg.k === "pick-character") {
+      if (msg.k === MSG.PICK_CHARACTER) {
         me.character = msg.character;
         me.ready = false; // re-confirm readiness against the new choice
         broadcast();
         return;
       }
 
-      if (msg.k === "set-ready") {
+      if (msg.k === MSG.SET_READY) {
         if (msg.ready && !me.team) {
-          send(transport, { k: "error", message: "Pick a Team before readying up." });
+          send(transport, { k: MSG.ERROR, message: "Pick a Team before readying up." });
           return;
         }
         me.ready = msg.ready;

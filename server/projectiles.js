@@ -1,9 +1,14 @@
-// projectiles.js — a Character's Primary Ability projectile: fired in a
-// straight line, damages enemy Minions and (neutral) Towers using the same
+// server/projectiles.js — a Character's Primary Ability projectile: fired in
+// a straight line, damages enemy Minions and (neutral) Towers using the same
 // HP/damage pattern as Minion combat (see minions.js/structures.js). Not
 // predicted client-side — CONTEXT.md only calls out the dash Secondary
 // Ability for that — so like Minion, this only needs to run in the server's
 // authoritative fixedUpdate.
+//
+// Split from shared/projectiles.js (which just holds sizing/timing
+// constants both sides need): this half depends on structures.js's Tower for
+// canHit's eligibility check, and Tower is server-only, so this file can't
+// live in shared/ without shared/ reaching into server-only code.
 //
 // Unlike Minion (which moves itself but leaves combat resolution to a
 // director-run pass over the whole scene — see server.js's MinionDirector),
@@ -20,15 +25,13 @@
 // immediately after its own motion integrates sidesteps that ordering
 // entirely.
 import { Entity } from "@cjgammon/gamekit";
-import { Minion } from "./minions.js";
+import {
+  PROJECTILE_W, PROJECTILE_H, PROJECTILE_SPEED,
+  PROJECTILE_DAMAGE, PROJECTILE_COOLDOWN, PROJECTILE_LIFETIME,
+} from "../shared/projectiles.js";
+import { Minion } from "../shared/minions.js";
 import { Tower } from "./structures.js";
-
-export const PROJECTILE_W = 6;
-export const PROJECTILE_H = 6;
-export const PROJECTILE_SPEED = 260; // px/s
-export const PROJECTILE_DAMAGE = 8;
-export const PROJECTILE_COOLDOWN = 0.5; // seconds between shots
-export const PROJECTILE_LIFETIME = 1.2; // seconds before despawning unspent
+import { pickNetState, PROJECTILE_STATE } from "../shared/protocol.js";
 
 /**
  * A Character's Primary Ability projectile: travels in a straight line at
@@ -58,9 +61,10 @@ export class Projectile extends Entity {
     if (!this.spent) this.director.resolveProjectileHit(this);
   }
 
-  // Per-entity payload the client reads via ProjectileView.applyNetState.
+  // Per-entity payload the client reads via ProjectileView.applyNetState —
+  // see protocol.js's PROJECTILE_STATE for the field list.
   netState() {
-    return { team: this.team };
+    return pickNetState(this, PROJECTILE_STATE);
   }
 }
 

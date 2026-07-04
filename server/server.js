@@ -12,15 +12,15 @@ import {
   TICK_RATE, PORT, TILE, TEAMS,
   CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS,
   stepCharacter,
-} from "./shared.js";
-import { getMap, buildMapData, worldSize } from "./maps.js";
+} from "../shared/shared.js";
+import { getMap, buildMapData, worldSize } from "../shared/maps.js";
 import { LobbyManager } from "./room.js";
-import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
-import { Tower, Base, canEngageTower, canEngageBase, resolveStructureDamage } from "./structures.js";
-import {
-  Projectile, PROJECTILE_W, PROJECTILE_H,
-  stepPrimaryAbility, canHit, applyProjectileDamage,
-} from "./projectiles.js";
+import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "../shared/minions.js";
+import { Tower, Base } from "./structures.js";
+import { PROJECTILE_W, PROJECTILE_H } from "../shared/projectiles.js";
+import { Projectile, stepPrimaryAbility } from "./projectiles.js";
+import { resolveStructureCombat, resolveProjectileHit as resolveHit } from "./combat.js";
+import { pickNetState, CHARACTER_STATE } from "../shared/protocol.js";
 
 // Selects which Map to run — the client must be pointed at the same one
 // (its `?map=` query param) since both sides build the Tilemap locally.
@@ -66,20 +66,16 @@ class Character extends Entity {
     this.game.combatDirector.spawnProjectile(x, y, this.team, this.facing);
   }
 
-  // Per-entity payload the client reads via CharacterView.applyNetState.
-  // Besides color, this carries grounded/prevJump: gamekit 0.2.0 restores
-  // velocity automatically before reconciliation replay (SnapshotEntity now
-  // carries vx/vy), but grounded/prevJump are app-specific jump-edge state
-  // the engine doesn't know about — stale values here let a replayed tick
+  // Per-entity payload the client reads via CharacterView.applyNetState —
+  // see protocol.js's CHARACTER_STATE for the field list. Besides color,
+  // this carries grounded/prevJump: gamekit 0.2.0 restores velocity
+  // automatically before reconciliation replay (SnapshotEntity now carries
+  // vx/vy), but grounded/prevJump are app-specific jump-edge state the
+  // engine doesn't know about — stale values here let a replayed tick
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
   // replay (see SimulateFn's doc comment in gamekit).
   netState() {
-    return {
-      color: this.color,
-      character: this.character,
-      grounded: this._grounded,
-      prevJump: this._prevJump,
-    };
+    return pickNetState(this, CHARACTER_STATE);
   }
 }
 
@@ -158,26 +154,14 @@ class MinionDirector extends Entity {
 
   // Minion-vs-Tower/Base engagement isn't detected by scene.overlap's full
   // AABB test (Tower/Base sit beside the Lane, not literally under a
-  // Minion's walking height — see structures.js's xOverlap), so each live
-  // Minion is checked directly against its own Lane's Tower, and — once that
-  // Tower is destroyed — the enemy Base. Blocked at a live Tower this tick
-  // means the Base is out of physical reach, gating per-Lane rather than
-  // globally (a Minion never reaches another Lane's Base check at all).
+  // Minion's walking height — see structures.js's xOverlap), so combat.js's
+  // resolveStructureCombat walks each live Minion directly against its own
+  // Lane's Tower, and — once that Tower is destroyed — the enemy Base. This
+  // method just applies the events it reports via `net`/`_endMatch`.
   _resolveStructureDamage() {
-    for (const minion of this.minions) {
-      if (minion.hp <= 0) continue;
-      const tower = this.towers[minion.laneIndex];
-      if (canEngageTower(minion, tower)) {
-        const { destroyed } = resolveStructureDamage(minion, tower);
-        if (destroyed) this.game.net.despawn(tower.netId);
-        continue;
-      }
-      if (tower.hp > 0) continue;
-      for (const base of this.bases) {
-        if (!canEngageBase(minion, base)) continue;
-        const { destroyed } = resolveStructureDamage(minion, base);
-        if (destroyed) this._endMatch(base.team);
-      }
+    for (const event of resolveStructureCombat(this.minions, this.towers, this.bases)) {
+      if (event.type === "towerDestroyed") this.game.net.despawn(event.tower.netId);
+      else this._endMatch(event.base.team);
     }
   }
 
@@ -232,19 +216,15 @@ class MinionDirector extends Entity {
   // end-of-tick) hit test, same as CLAUDE.md calls out for projectile combat —
   // since PROJECTILE_SPEED can otherwise step a Projectile clean over a thin
   // Minion within one tick. Sweeps the whole scene rather than just
-  // minions/towers, same shape as _resolveMinionCombat's full-scene overlap;
-  // canHit filters out everything else (Characters, other Projectiles).
-  // Spent on its first hit, same one-shot rule as resolveStructureDamage's
-  // Minion attacks.
+  // minions/towers; combat.js's resolveProjectileHit filters out everything
+  // else (Characters, other Projectiles) via canHit and reports the result
+  // for this method to apply via net/`_killMinion`.
   resolveProjectileHit(projectile) {
     this.game.scene.overlapSwept(projectile, this.game.scene.root, (proj, target) => {
-      if (proj.spent || !canHit(proj, target)) return;
-      const { destroyed } = applyProjectileDamage(proj, target);
-      proj.spent = true;
-      if (destroyed) {
-        if (target instanceof Minion) this._killMinion(target);
-        else this.game.net.despawn(target.netId);
-      }
+      const { destroyed, isMinion } = resolveHit(proj, target);
+      if (!destroyed) return;
+      if (isMinion) this._killMinion(target);
+      else this.game.net.despawn(target.netId);
     });
   }
 

@@ -4,6 +4,7 @@
 // in the server's authoritative fixedUpdate (see server.js's MinionDirector).
 import { Entity } from "@cjgammon/gamekit";
 import { TILE, TEAMS } from "./shared.js";
+import { pickNetState, MINION_STATE } from "./protocol.js";
 
 export const MINION_W = 10;
 export const MINION_H = 10;
@@ -81,9 +82,10 @@ export class Minion extends Entity {
     }
   }
 
-  // Per-entity payload the client reads via MinionView.applyNetState.
+  // Per-entity payload the client reads via MinionView.applyNetState — see
+  // protocol.js's MINION_STATE for the field list.
   netState() {
-    return { team: this.team, color: this.color };
+    return pickNetState(this, MINION_STATE);
   }
 }
 
