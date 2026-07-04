@@ -1,8 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { Entity } from "@cjgammon/gamekit";
-import { TEAMS, CHAR_W, CHAR_H, CHAR_HP, SPAWN_Y } from "../shared.js";
-import { Base } from "../structures.js";
-import { RESPAWN_TIME, downCharacter, respawnPoint, teamSpawnPoint, stepRespawn } from "../respawn.js";
+import { TEAMS, CHAR_W, CHAR_H, CHAR_HP, SPAWN_Y } from "../shared/shared.js";
+import { Base } from "./structures.js";
+import { RESPAWN_TIME, downCharacter, respawnPoint, teamSpawnPoint, stepRespawn } from "./respawn.js";
 
 const [TEAM_A] = TEAMS;
 

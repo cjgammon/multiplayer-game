@@ -1,15 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { TEAMS } from "../shared.js";
-import { Minion, MINION_HP } from "../minions.js";
-import { Tower } from "../structures.js";
-import {
-  MELEE_RANGE,
-  MELEE_HEIGHT_PAD,
-  MELEE_DAMAGE,
-  meleeHitbox,
-  canHitMelee,
-  applyMeleeDamage,
-} from "../melee.js";
+import { TEAMS } from "../shared/shared.js";
+import { Minion, MINION_HP } from "../shared/minions.js";
+import { Tower } from "./structures.js";
+import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_DAMAGE } from "../shared/melee.js";
+import { meleeHitbox, canHitMelee, applyMeleeDamage } from "./melee.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 

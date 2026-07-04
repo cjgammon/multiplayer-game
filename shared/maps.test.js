@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { TILE, TEAMS } from "../shared.js";
-import { MAPS, getMap, buildMapData } from "../maps.js";
+import { TILE, TEAMS } from "./shared.js";
+import { MAPS, getMap, buildMapData } from "./maps.js";
 
 describe("getMap", () => {
   test("returns the singleLane map with one lane and two bases", () => {

@@ -12,25 +12,23 @@ import {
   TICK_RATE, PORT, TILE, TEAMS,
   CHAR_W, CHAR_H, CHAR_HP, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAM_COLORS, CHARACTERS,
   stepCharacter,
-} from "./shared.js";
+} from "../shared/shared.js";
 import { stepPrimaryAbility } from "./abilities.js";
-import { getMap, buildMapData, worldSize } from "./maps.js";
+import { getMap, buildMapData, worldSize } from "../shared/maps.js";
 import { LobbyManager } from "./room.js";
-import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
-import { Tower, Base, canEngageTower, canEngageBase, resolveStructureDamage } from "./structures.js";
-import {
-  Projectile, PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN,
-  canHit, applyProjectileDamage,
-} from "./projectiles.js";
-import {
-  MELEE_COOLDOWN,
-  meleeHitbox, canHitMelee, applyMeleeDamage,
-} from "./melee.js";
+import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "../shared/minions.js";
+import { Tower, Base } from "./structures.js";
+import { Projectile } from "./projectiles.js";
+import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "../shared/projectiles.js";
+import { meleeHitbox } from "./melee.js";
+import { MELEE_COOLDOWN } from "../shared/melee.js";
 import {
   SolarPickup, SOLAR_PER_MINION, SOLAR_PER_CHARACTER,
   canCollect, resolveCollect, canPurchaseUpgrade, resolvePurchaseUpgrade,
-} from "./solar.js";
+} from "../shared/solar.js";
 import { downCharacter, stepRespawn, teamSpawnPoint } from "./respawn.js";
+import { resolveStructureCombat, resolveProjectileHit as resolveHit, resolveMeleeHit } from "./combat.js";
+import { pickNetState, CHARACTER_STATE } from "../shared/protocol.js";
 
 // One entry per shared.js's CHARACTERS id: each kit's Primary Ability
 // cooldown and its fire effect. The two kits' Primary Abilities otherwise
@@ -150,11 +148,12 @@ class Character extends Entity {
     this._prevBuyUpgrade = upgradeId;
   }
 
-  // Per-entity payload the client reads via CharacterView.applyNetState.
-  // Besides color, this carries grounded/prevJump: gamekit 0.2.0 restores
-  // velocity automatically before reconciliation replay (SnapshotEntity now
-  // carries vx/vy), but grounded/prevJump are app-specific jump-edge state
-  // the engine doesn't know about — stale values here let a replayed tick
+  // Per-entity payload the client reads via CharacterView.applyNetState —
+  // see protocol.js's CHARACTER_STATE for the field list. Besides color,
+  // this carries grounded/prevJump: gamekit 0.2.0 restores velocity
+  // automatically before reconciliation replay (SnapshotEntity now carries
+  // vx/vy), but grounded/prevJump are app-specific jump-edge state the
+  // engine doesn't know about — stale values here let a replayed tick
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
   // replay (see SimulateFn's doc comment in gamekit). speedMultiplier is
   // included for the same reason: shared.js's stepCharacter (the replayed
@@ -164,33 +163,22 @@ class Character extends Entity {
   // it's only read server-side (melee.js's applyMeleeDamage, this file's
   // KITS[0].fire), so the client never needs a copy. `downed` (#9) lets the
   // client hide the sprite while it's out of play; `hp` drives the dev HP
-  // HUD only — no gameplay logic client-side reads it.
+  // HUD only — no gameplay logic client-side reads it. `character` is
+  // deliberately omitted too: nothing on the client reads it (see
+  // protocol.js's header comment).
   netState() {
-    return {
-      color: this.color,
-      character: this.character,
-      grounded: this._grounded,
-      prevJump: this._prevJump,
-      facing: this.facing,
-      prevDash: this._prevDash,
-      dashCooldown: this.dashCooldown,
-      hp: this.hp,
-      dashTimer: this.dashTimer,
-      solar: this.solar,
-      speedMultiplier: this.speedMultiplier,
-      downed: this.downed,
-    };
+    return pickNetState(this, CHARACTER_STATE);
   }
 }
 
-// Drives Minion waves, same-Lane combat, and Character Primary Ability
-// Projectiles for a Match, independent of any connection — see acceptance
-// criteria on #4 ("no player input required"). Not net.spawn'd itself (no
-// visual representation to sync); startMatch below adds one to each Match's
-// Scene ahead of any Minion, so its fixedUpdate (combat resolution, then
-// spawning) always runs before theirs within the same tick, letting a
-// Minion's own fixedUpdate see this tick's `engaged` flag the moment it's
-// set.
+// Drives Minion waves, same-Lane combat, Character Primary Abilities, and
+// the Solar economy for a Match, independent of any connection — see
+// acceptance criteria on #4 ("no player input required"). Not net.spawn'd
+// itself (no visual representation to sync); startMatch below adds one to
+// each Match's Scene ahead of any Minion, so its fixedUpdate (combat
+// resolution, then spawning) always runs before theirs within the same
+// tick, letting a Minion's own fixedUpdate see this tick's `engaged` flag
+// the moment it's set.
 class MinionDirector extends Entity {
   constructor(game) {
     super();
@@ -249,7 +237,9 @@ class MinionDirector extends Entity {
   // just Character-vs-pickup instead of Minion-vs-Minion. `pickup.collected`
   // (checked by canCollect) guards the same same-pass double-resolution race
   // canEngage's hp>0 check guards for Minion combat — see solar.js's
-  // SolarPickup class comment.
+  // SolarPickup class comment. Not combat.js's concern (see its header
+  // comment) — a two-line dispatch, no eligibility/damage math to
+  // consolidate.
   _resolveSolarCollection() {
     this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
       const [character, pickup] = a instanceof SolarPickup ? [b, a] : [a, b];
@@ -271,9 +261,9 @@ class MinionDirector extends Entity {
   // Resolves a Character's Upgrade purchase request (see Character.fixedUpdate
   // above): finds that Character's own Team's Base and hands off to solar.js's
   // canPurchaseUpgrade/resolvePurchaseUpgrade, the same
-  // check-then-resolve shape resolveMeleeSwing/resolveProjectileHit use for
-  // combat. A no-op if the Character isn't at their own Base, can't afford
-  // it, or already bought it this Match.
+  // check-then-resolve shape combat.js's resolvers use for combat. A no-op if
+  // the Character isn't at their own Base, can't afford it, or already bought
+  // it this Match. Not combat.js's concern — economy, not combat.
   tryPurchaseUpgrade(character, upgradeId) {
     const base = this.bases.find((b) => b.team === character.team);
     if (!base || !canPurchaseUpgrade(character, base, upgradeId)) return;
@@ -283,7 +273,9 @@ class MinionDirector extends Entity {
   // Same-Lane, opposing-Team Minion pairs only — a converging multi-Lane Map
   // (see maps.js's twinLanes) can put different Lanes' Minions in physical
   // overlap, so laneIndex is checked (via canEngage) in addition to the AABB
-  // test itself.
+  // test itself. Calls minions.js directly, not combat.js — nothing to
+  // consolidate beyond this two-line dispatch (see combat.js's header
+  // comment).
   _resolveMinionCombat() {
     this.game.scene.overlap(this.game.scene.root, this.game.scene.root, (a, b) => {
       if (!canEngage(a, b)) return;
@@ -295,26 +287,14 @@ class MinionDirector extends Entity {
 
   // Minion-vs-Tower/Base engagement isn't detected by scene.overlap's full
   // AABB test (Tower/Base sit beside the Lane, not literally under a
-  // Minion's walking height — see structures.js's xOverlap), so each live
-  // Minion is checked directly against its own Lane's Tower, and — once that
-  // Tower is destroyed — the enemy Base. Blocked at a live Tower this tick
-  // means the Base is out of physical reach, gating per-Lane rather than
-  // globally (a Minion never reaches another Lane's Base check at all).
+  // Minion's walking height — see structures.js's xOverlap), so combat.js's
+  // resolveStructureCombat walks each live Minion directly against its own
+  // Lane's Tower, and — once that Tower is destroyed — the enemy Base. This
+  // method just applies the events it reports via `net`/`_endMatch`.
   _resolveStructureDamage() {
-    for (const minion of this.minions) {
-      if (minion.hp <= 0) continue;
-      const tower = this.towers[minion.laneIndex];
-      if (canEngageTower(minion, tower)) {
-        const { destroyed } = resolveStructureDamage(minion, tower);
-        if (destroyed) this.game.net.despawn(tower.netId);
-        continue;
-      }
-      if (tower.hp > 0) continue;
-      for (const base of this.bases) {
-        if (!canEngageBase(minion, base)) continue;
-        const { destroyed } = resolveStructureDamage(minion, base);
-        if (destroyed) this._endMatch(base.team);
-      }
+    for (const event of resolveStructureCombat(this.minions, this.towers, this.bases)) {
+      if (event.type === "towerDestroyed") this.game.net.despawn(event.tower.netId);
+      else this._endMatch(event.base.team);
     }
   }
 
@@ -371,6 +351,22 @@ class MinionDirector extends Entity {
     this.projectiles.push(projectile);
   }
 
+  // Applies a destroyed target's despawn/down response — shared by
+  // resolveProjectileHit and resolveMeleeSwing below, both of which resolve
+  // a hit via combat.js and get back a `targetKind` ("minion" | "tower" |
+  // "character") to dispatch on. A Character reaching 0 hp is downed (#9,
+  // see respawn.js's downCharacter) rather than despawned — the same
+  // non-elimination flow either Ability triggers — and drops Solar first,
+  // same as a killed Minion.
+  _applyKill(target, targetKind) {
+    if (targetKind === "minion") this._killMinion(target);
+    else if (targetKind === "tower") this.game.net.despawn(target.netId);
+    else {
+      this.dropSolar(target.x, target.y, SOLAR_PER_CHARACTER);
+      downCharacter(target);
+    }
+  }
+
   // Called by a Projectile's own fixedUpdate right after it integrates this
   // tick's motion (see projectiles.js's Projectile.fixedUpdate and its class
   // comment on why the check has to happen there, not from this Director's
@@ -378,25 +374,13 @@ class MinionDirector extends Entity {
   // end-of-tick) hit test, same as CLAUDE.md calls out for projectile combat —
   // since PROJECTILE_SPEED can otherwise step a Projectile clean over a thin
   // Minion within one tick. Sweeps the whole scene rather than just
-  // minions/towers, same shape as _resolveMinionCombat's full-scene overlap;
-  // canHit filters to enemy Minions/Towers/Characters, same set melee.js's
-  // canHitMelee allows. Spent on its first hit, same one-shot rule as
-  // resolveStructureDamage's Minion attacks. A Character reaching 0 hp is
-  // downed (#9, see respawn.js's downCharacter) rather than despawned — the
-  // same non-elimination flow resolveMeleeSwing triggers on a melee kill —
-  // identified structurally by its `character` field, same as canHit does.
+  // minions/towers; combat.js's resolveProjectileHit filters to enemy
+  // Minions/Towers/Characters via canHit and reports the result for this
+  // method to apply via _applyKill.
   resolveProjectileHit(projectile) {
     this.game.scene.overlapSwept(projectile, this.game.scene.root, (proj, target) => {
-      if (proj.spent || !canHit(proj, target)) return;
-      const { destroyed } = applyProjectileDamage(proj, target);
-      proj.spent = true;
-      if (!destroyed) return;
-      if (target instanceof Minion) this._killMinion(target);
-      else if (target instanceof Tower) this.game.net.despawn(target.netId);
-      else if (target.character !== undefined) {
-        this.dropSolar(target.x, target.y, SOLAR_PER_CHARACTER);
-        downCharacter(target);
-      }
+      const { destroyed, targetKind } = resolveHit(proj, target);
+      if (destroyed) this._applyKill(target, targetKind);
     });
   }
 
@@ -404,25 +388,14 @@ class MinionDirector extends Entity {
   // (see KITS above) — unlike a Projectile, there's no traveling entity or
   // lifetime to track, just one immediate scene.overlap against a hitbox in
   // front of `character` (see melee.js's meleeHitbox). Sweeps the whole scene
-  // same as _resolveMinionCombat/resolveProjectileHit; canHitMelee filters to
-  // enemy Minions/Towers/Characters. A Character reaching 0 hp is downed (#9,
-  // see respawn.js's downCharacter) rather than despawned — identified
-  // structurally by its `character` field, same as canHitMelee does, since
-  // Character isn't importable here without a cycle back to this module. Also
-  // drops Solar (#10) at its position before downCharacter resets it to the
-  // respawn spawn point, same as a killed Minion.
+  // same as _resolveMinionCombat/resolveProjectileHit; combat.js's
+  // resolveMeleeHit filters to enemy Minions/Towers/Characters and reports
+  // the result for this method to apply via _applyKill.
   resolveMeleeSwing(character) {
     const hitbox = meleeHitbox(character);
     this.game.scene.overlap(hitbox, this.game.scene.root, (_hitbox, target) => {
-      if (!canHitMelee(character, target)) return;
-      const { destroyed } = applyMeleeDamage(character, target);
-      if (!destroyed) return;
-      if (target instanceof Minion) this._killMinion(target);
-      else if (target instanceof Tower) this.game.net.despawn(target.netId);
-      else if (target.character !== undefined) {
-        this.dropSolar(target.x, target.y, SOLAR_PER_CHARACTER);
-        downCharacter(target);
-      }
+      const { destroyed, targetKind } = resolveMeleeHit(character, target);
+      if (destroyed) this._applyKill(target, targetKind);
     });
   }
 

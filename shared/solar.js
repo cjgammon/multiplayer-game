@@ -7,6 +7,7 @@
 // and Upgrade purchases resolve on the server the same way a Primary
 // Ability fire does (see server.js's MinionDirector.tryPurchaseUpgrade).
 import { Entity } from "@cjgammon/gamekit";
+import { pickNetState, SOLAR_STATE } from "./protocol.js";
 
 export const SOLAR_PICKUP_SIZE = 6;
 export const SOLAR_PER_MINION = 5;
@@ -43,9 +44,12 @@ export class SolarPickup extends Entity {
     this.collected = false;
   }
 
-  // Per-entity payload the client reads via SolarPickupView.applyNetState.
+  // Per-entity payload the client reads via SolarPickupView.applyNetState —
+  // see protocol.js's SOLAR_STATE. Currently empty: SolarPickupView renders
+  // a fixed gold tint and reads nothing dynamic, so `amount` (used only
+  // server-side, to credit the collecting Character) isn't synced.
   netState() {
-    return { amount: this.amount };
+    return pickNetState(this, SOLAR_STATE);
   }
 }
 

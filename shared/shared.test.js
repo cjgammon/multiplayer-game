@@ -11,7 +11,7 @@ import {
   DASH_DURATION,
   DASH_COOLDOWN,
   TILE,
-} from "../shared.js";
+} from "./shared.js";
 
 const NO_INPUT = { left: false, right: false, jump: false, dash: false };
 

@@ -1,15 +1,11 @@
 import { describe, test, expect } from "vitest";
-import { TEAMS } from "../shared.js";
-import { Minion, MINION_HP } from "../minions.js";
-import { Tower } from "../structures.js";
+import { TEAMS } from "../shared/shared.js";
+import { Minion, MINION_HP } from "../shared/minions.js";
 import {
-  Projectile,
-  PROJECTILE_SPEED,
-  PROJECTILE_DAMAGE,
-  PROJECTILE_LIFETIME,
-  canHit,
-  applyProjectileDamage,
-} from "../projectiles.js";
+  PROJECTILE_SPEED, PROJECTILE_DAMAGE, PROJECTILE_LIFETIME,
+} from "../shared/projectiles.js";
+import { Tower } from "./structures.js";
+import { Projectile, canHit, applyProjectileDamage } from "./projectiles.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 

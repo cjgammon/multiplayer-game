@@ -1,14 +1,21 @@
-// melee.js — the melee Character's Primary Ability: unlike the ranged kit's
-// traveling Projectile (projectiles.js), a swing is resolved instantly
-// against a short hitbox extending from the Character's leading edge the
-// moment it triggers — no separate net-synced entity or lifetime bookkeeping
-// needed. Its cooldown/edge-trigger bookkeeping comes from abilities.js's
-// stepPrimaryAbility, the same generic step the ranged kit's Primary Ability
-// uses (see #8) — this module only supplies the melee-specific hitbox and
-// damage math, called by server.js's MinionDirector.resolveMeleeSwing.
+// server/melee.js — the melee Character's Primary Ability: unlike the
+// ranged kit's traveling Projectile (projectiles.js), a swing is resolved
+// instantly against a short hitbox extending from the Character's leading
+// edge the moment it triggers — no separate net-synced entity or lifetime
+// bookkeeping needed. Its cooldown/edge-trigger bookkeeping comes from
+// abilities.js's stepPrimaryAbility, the same generic step the ranged kit's
+// Primary Ability uses (see #8) — this module only supplies the
+// melee-specific hitbox and damage math, called by server.js's
+// MinionDirector.resolveMeleeSwing (via combat.js's resolveMeleeHit).
 // Not predicted client-side, same as the ranged Projectile — only the dash/
 // charge Secondary Ability is (see shared.js's stepCharacter) — so this only
 // needs to run in the server's authoritative fixedUpdate.
+//
+// Split from shared/melee.js (which just holds sizing/timing constants both
+// sides need): this half depends on structures.js's Tower for canHitMelee's
+// eligibility check, and Tower is server-only, so this file can't live in
+// shared/ without shared/ reaching into server-only code — same split as
+// projectiles.js.
 //
 // Damages enemy Minions, (neutral) Towers, and enemy Characters — the first
 // Ability in this app to reach Characters at all (projectiles.js's canHit
@@ -17,13 +24,9 @@
 // server.js's MinionDirector.resolveMeleeSwing and respawn.js) — this module
 // only applies the damage and reports the death, not the respawn response.
 import { Entity } from "@cjgammon/gamekit";
-import { Minion } from "./minions.js";
+import { Minion } from "../shared/minions.js";
 import { Tower } from "./structures.js";
-
-export const MELEE_RANGE = 12; // px the hitbox extends past the Character's leading edge
-export const MELEE_HEIGHT_PAD = 4; // px the hitbox extends above/below the Character, for a forgiving swing arc
-export const MELEE_DAMAGE = 12;
-export const MELEE_COOLDOWN = 0.4; // seconds between swings — shorter than the ranged Primary Ability's, matching a melee kit's tighter reach
+import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_DAMAGE } from "../shared/melee.js";
 
 /**
  * The transient AABB one melee swing tests against: a box extending

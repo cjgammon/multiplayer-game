@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { LobbyManager, generateRoomCode, ROOM_CODE_ALPHABET } from "./room.js";
-import { MAX_TEAM_SIZE, MAX_ROOM_SIZE } from "./shared.js";
+import { MAX_TEAM_SIZE, MAX_ROOM_SIZE } from "../shared/shared.js";
 
 // A minimal stand-in for the gamekit `Transport` interface (onMessage/onClose
 // Signals + send/close) so lobby logic can be tested without real sockets.

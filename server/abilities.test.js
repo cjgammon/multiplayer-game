@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { stepPrimaryAbility } from "../abilities.js";
+import { stepPrimaryAbility } from "./abilities.js";
 
 const COOLDOWN = 0.5;
 

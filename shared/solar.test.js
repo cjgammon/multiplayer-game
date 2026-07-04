@@ -1,6 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { TEAMS } from "../shared.js";
-import { Base } from "../structures.js";
+import { TEAMS } from "./shared.js";
 import {
   SolarPickup,
   SOLAR_PICKUP_SIZE,
@@ -9,7 +8,7 @@ import {
   resolveCollect,
   canPurchaseUpgrade,
   resolvePurchaseUpgrade,
-} from "../solar.js";
+} from "./solar.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 
@@ -56,8 +55,11 @@ describe("resolveCollect", () => {
 });
 
 describe("canPurchaseUpgrade", () => {
+  // canPurchaseUpgrade only reads x/y/width/height/team off `base` (see its
+  // overlaps() helper) — a plain fixture, not the real (server-only) Base
+  // class, keeps this test from reaching across the shared/server seam.
   function ownBase(team = TEAM_A) {
-    return new Base(0, 0, 32, 32, team);
+    return { x: 0, y: 0, width: 32, height: 32, team };
   }
 
   test("can buy an affordable Upgrade while standing in own Team's Base", () => {

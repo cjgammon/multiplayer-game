@@ -4,23 +4,21 @@
 // flow from #1: predicts + reconciles the local Character, remote Characters
 // are interpolated ~100ms behind real time by NetClient (no config needed —
 // see gamekit's NetClient).
-import { Signal, Sprite, Tilemap, createEntityFactory } from "@cjgammon/gamekit";
-import { NetScene } from "@cjgammon/gamekit/net";
+import { Signal, Sprite, Tilemap } from "@cjgammon/gamekit";
 import {
   RenderGame,
   isWebGPUAvailable,
   mountUnsupportedNotice,
 } from "@cjgammon/gamekit/renderer";
 import {
-  TICK_RATE, PORT, TILE,
-  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAMS, CHARACTERS, TEAM_COLORS, MAX_TEAM_SIZE,
+  TICK_RATE, PORT, TILE, TEAMS, CHARACTERS, MAX_TEAM_SIZE,
   stepCharacter,
-} from "./shared.js";
-import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
-import { MINION_W, MINION_H } from "./minions.js";
-import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "./projectiles.js";
-import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_COOLDOWN } from "./melee.js";
-import { SOLAR_PICKUP_SIZE } from "./solar.js";
+} from "../shared/shared.js";
+import { getMap, buildMapData, worldSize } from "../shared/maps.js";
+import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "../shared/projectiles.js";
+import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_COOLDOWN } from "../shared/melee.js";
+import { MSG } from "../shared/protocol.js";
+import { createWorldScene, CharacterView } from "./match-view.js";
 
 const canvas = document.getElementById("view");
 
@@ -96,19 +94,19 @@ function main() {
     const btn = document.createElement("button");
     btn.textContent = `Team ${team}`;
     btn.dataset.team = team;
-    btn.addEventListener("click", () => send({ k: "pick-team", team }));
+    btn.addEventListener("click", () => send({ k: MSG.PICK_TEAM, team }));
     teamPickerEl.appendChild(btn);
   }
   for (const character of CHARACTERS) {
     const btn = document.createElement("button");
     btn.textContent = character.name;
     btn.dataset.character = character.id;
-    btn.addEventListener("click", () => send({ k: "pick-character", character: character.id }));
+    btn.addEventListener("click", () => send({ k: MSG.PICK_CHARACTER, character: character.id }));
     characterPickerEl.appendChild(btn);
   }
   // Pre-select the first Character in the roster so readying up doesn't
   // require an explicit pick.
-  send({ k: "pick-character", character: CHARACTERS[0].id }); // queued until the socket opens
+  send({ k: MSG.PICK_CHARACTER, character: CHARACTERS[0].id }); // queued until the socket opens
 
   function connect(onOpenMsg) {
     ws = new WebSocket(`ws://localhost:${PORT}`);
@@ -123,17 +121,17 @@ function main() {
   }
 
   function onLobbyMessage(msg) {
-    if (msg.k === "room-state") {
+    if (msg.k === MSG.ROOM_STATE) {
       latestState = msg;
       roomError.textContent = "";
       renderRoom(msg);
       return;
     }
-    if (msg.k === "error") {
+    if (msg.k === MSG.ERROR) {
       (latestState ? roomError : landingError).textContent = msg.message;
       return;
     }
-    if (msg.k === "match-start") {
+    if (msg.k === MSG.MATCH_START) {
       // The last room-state broadcast still reflects everyone's final
       // Team/Character picks (see room.js's LobbyManager — it broadcasts on
       // every pick/ready before ever sending match-start), so this is the
@@ -179,7 +177,7 @@ function main() {
 
   createBtn.addEventListener("click", () => {
     landingError.textContent = "";
-    connect({ k: "create-room" });
+    connect({ k: MSG.CREATE_ROOM });
   });
 
   setupDevPanel();
@@ -220,10 +218,10 @@ function main() {
       }
       pending.length = 0;
       landingError.textContent = "";
-      connect({ k: "create-room" });
-      send({ k: "pick-character", character: CHARACTERS[0].id });
-      send({ k: "pick-team", team: TEAMS[0] });
-      send({ k: "set-ready", ready: true });
+      connect({ k: MSG.CREATE_ROOM });
+      send({ k: MSG.PICK_CHARACTER, character: CHARACTERS[0].id });
+      send({ k: MSG.PICK_TEAM, team: TEAMS[0] });
+      send({ k: MSG.SET_READY, ready: true });
     });
 
     devPanelJumpBtn = jumpBtn;
@@ -233,12 +231,12 @@ function main() {
     const code = joinCodeInput.value.trim().toUpperCase();
     if (!code) return;
     landingError.textContent = "";
-    connect({ k: "join-room", code });
+    connect({ k: MSG.JOIN_ROOM, code });
   });
 
   readyToggle.addEventListener("click", () => {
     const me = latestState.players.find((p) => p.id === latestState.you);
-    send({ k: "set-ready", ready: !me.ready });
+    send({ k: MSG.SET_READY, ready: !me.ready });
   });
 
   function startMatch(transport, myCharacter) {
@@ -261,180 +259,6 @@ function main() {
     const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
     tilemap.tint = 0x445566;
 
-    // Untextured Sprite → renders as a solid tinted box (no art pipeline yet).
-    // Config (size/drag/maxVelocity) must match the server's Character exactly
-    // so client-side prediction integrates identically.
-    class CharacterView extends Sprite {
-      // Secondary Ability (dash) state — mirrors server.js's Character
-      // fields since shared.js's stepCharacter (this scene's `simulate`,
-      // below) reads/writes them during prediction and reconciliation replay.
-      facing = 1;
-      dashCooldown = 0;
-      dashTimer = 0;
-      // Solar economy (see #10): speedMultiplier is read by stepCharacter
-      // during prediction/replay, same reason dash* round-trips above; solar
-      // is display-only (read by the HUD update in WorldScene.update below).
-      speedMultiplier = 1;
-      solar = 0;
-      // Downed (#9) — mirrors server.js's Character field so the `simulate`
-      // callback below can skip predicting movement for a Character that's
-      // out of play, same as the server's Character.fixedUpdate does.
-      downed = false;
-      // Dev HP HUD only (see the hpHudEl block below) — no gameplay logic
-      // reads this client-side.
-      hp = 0;
-
-      constructor() {
-        super();
-        this.width = CHAR_W;
-        this.height = CHAR_H;
-        this.drag.set(DRAG_X, 0);
-        this.maxVelocity.set(MAX_VEL_X, MAX_VEL_Y);
-      }
-
-      // Reads the payload the server's Character.netState() sends. gamekit
-      // 0.2.0 restores velocity automatically before reconciliation replay;
-      // grounded/prevJump/facing/dash* are app-specific state stepCharacter
-      // reads/writes that it doesn't know about, so we still restore those
-      // ourselves — applyNetState is guaranteed to run before the replay
-      // (see SimulateFn's doc comment).
-      applyNetState(state) {
-        if (!state) return;
-        if (state.color !== undefined) this.tint = state.color;
-        if (state.grounded !== undefined) this._grounded = state.grounded;
-        if (state.prevJump !== undefined) this._prevJump = state.prevJump;
-        if (state.facing !== undefined) this.facing = state.facing;
-        if (state.prevDash !== undefined) this._prevDash = state.prevDash;
-        if (state.dashCooldown !== undefined) this.dashCooldown = state.dashCooldown;
-        if (state.dashTimer !== undefined) this.dashTimer = state.dashTimer;
-        if (state.speedMultiplier !== undefined) this.speedMultiplier = state.speedMultiplier;
-        if (state.solar !== undefined) this.solar = state.solar;
-        // Downed (#9): hidden rather than despawned — the server keeps
-        // simulating/networking the same entity through its respawn timer
-        // (see respawn.js's header comment on why), so `visible` (respected
-        // by gamekit's SceneWalker) is the seam to hide it without touching
-        // `alive`. Also read by the `simulate` callback below, so the local
-        // player's own prediction freezes the same way the server's
-        // Character.fixedUpdate does instead of drifting a hidden entity.
-        if (state.downed !== undefined) {
-          this.downed = state.downed;
-          this.visible = !state.downed;
-        }
-        if (state.hp !== undefined) this.hp = state.hp;
-      }
-    }
-
-    // Untextured Sprite → renders as a solid tinted box, same as CharacterView.
-    // Not predicted (no player drives a Minion) — NetClient interpolates it
-    // like any other remote entity, from the position the server broadcasts.
-    class MinionView extends Sprite {
-      constructor() {
-        super();
-        this.width = MINION_W;
-        this.height = MINION_H;
-      }
-
-      // Reads the payload the server's Minion.netState() sends.
-      applyNetState(state) {
-        if (!state) return;
-        if (state.color !== undefined) this.tint = state.color;
-      }
-    }
-
-    // Bases and Towers are now server-authoritative net.spawn entities (see
-    // structures.js and server.js's MinionDirector) — HP/destruction lives
-    // there, so the client just renders whatever position/state the server
-    // sends, same as Minion.
-    class TowerView extends Sprite {
-      constructor() {
-        super();
-        this.width = TOWER_SIZE;
-        this.height = TOWER_SIZE;
-        this.tint = TOWER_COLOR;
-      }
-    }
-
-    class BaseView extends Sprite {
-      constructor() {
-        super();
-        this.width = BASE_SIZE;
-        this.height = BASE_SIZE;
-      }
-
-      // Reads the payload the server's Base.netState() sends.
-      applyNetState(state) {
-        if (!state) return;
-        if (state.team !== undefined) this.tint = TEAM_COLORS[state.team];
-      }
-    }
-
-    // Untextured Sprite → renders as a solid tinted box, same as MinionView.
-    // Not predicted (see projectiles.js's stepPrimaryAbility comment — only
-    // the dash Secondary Ability is client-predicted): NetClient interpolates
-    // it from the position the server broadcasts, like a Minion.
-    class ProjectileView extends Sprite {
-      constructor() {
-        super();
-        this.width = PROJECTILE_W;
-        this.height = PROJECTILE_H;
-      }
-
-      // Reads the payload the server's Projectile.netState() sends.
-      applyNetState(state) {
-        if (!state) return;
-        if (state.team !== undefined) this.tint = TEAM_COLORS[state.team];
-      }
-    }
-
-    // Untextured Sprite → renders as a solid tinted box, same as MinionView.
-    // Not predicted (no player drives a pickup, and collecting one has no
-    // latency-sensitive feedback that needs prediction — see solar.js's
-    // header comment): NetClient interpolates it like any other remote
-    // entity.
-    class SolarPickupView extends Sprite {
-      constructor() {
-        super();
-        this.width = SOLAR_PICKUP_SIZE;
-        this.height = SOLAR_PICKUP_SIZE;
-        this.tint = 0xffd700;
-      }
-    }
-
-    const factory = createEntityFactory({
-      character: () => new CharacterView(),
-      minion: () => new MinionView(),
-      tower: () => new TowerView(),
-      base: () => new BaseView(),
-      projectile: () => new ProjectileView(),
-      solar: () => new SolarPickupView(),
-    });
-
-    class WorldScene extends NetScene {
-      create() {
-        this.add(tilemap);
-        this.camera.bounds = { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H };
-      }
-
-      update(dt) {
-        super.update(dt);
-        const local = this.client.entities.get(this.client.you);
-        if (!local) return;
-        // Start following the local Character as soon as it's spawned.
-        // (gamekit 0.2.0 predicts the local player in Scene's preCamera seam,
-        // before the camera follows, and spawns it with interpolate = true —
-        // no app-side workaround needed for either anymore.)
-        if (!this._following) {
-          this.camera.follow(local, 0.2);
-          this.camera.snapToTarget();
-          this._following = true;
-        }
-        // Solar HUD (see #10) — display-only, driven straight off the local
-        // Character's synced `solar` field (see CharacterView.applyNetState).
-        solarAmountEl.textContent = local.solar;
-        updateHpHud(this.client);
-      }
-    }
-
     // Dev-only readout so hp (server-authoritative, never rendered on the
     // sprite itself — see server.js's Character.hp comment) is actually
     // visible while testing damage/death/respawn (#9): one colored dot +
@@ -449,15 +273,29 @@ function main() {
       hpHudEl.innerHTML = rows.join("&nbsp;&nbsp;");
     }
 
-    const scene = new WorldScene(transport, factory, {
-      // Predict OUR Character by running the SAME movement the server runs.
-      // Skips prediction while downed (#9), mirroring the server's
-      // Character.fixedUpdate guard — otherwise the local (hidden) entity
-      // would keep drifting from replayed input during the respawn timer,
-      // dragging the camera (which follows this same entity) along with it.
+    // Views, entity factory, and the NetScene subclass live in match-view.js
+    // — this only wires them up with the map-specific tilemap/bounds, the
+    // prediction callback (which client.js needs a direct `tilemap`
+    // reference for anyway, since it must run the SAME movement the server
+    // runs), and the per-frame HUD update (match-view.js never touches the
+    // DOM itself — see its header comment). Skips prediction while downed
+    // (#9), mirroring the server's Character.fixedUpdate guard — otherwise
+    // the local (hidden) entity would keep drifting from replayed input
+    // during the respawn timer, dragging the camera (which follows this
+    // same entity) along with it.
+    const scene = createWorldScene({
+      transport,
+      tilemap,
+      worldBounds: { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H },
       simulate: (entity, input, dt) => {
         if (entity.downed) return;
         stepCharacter(entity, input, dt, tilemap);
+      },
+      onLocalUpdate: (local, client) => {
+        // Solar HUD (see #10) — display-only, driven straight off the local
+        // Character's synced `solar` field (see CharacterView.applyNetState).
+        solarAmountEl.textContent = local.solar;
+        updateHpHud(client);
       },
     });
 
@@ -467,9 +305,10 @@ function main() {
     });
 
     // Send input on change; prediction + sending happen each tick. `fire`
-    // isn't predicted (see ProjectileView above) — it's just relayed to the
-    // server, which edge-triggers/cooldown-gates it (see projectiles.js's
-    // stepPrimaryAbility) the same way `jump` is edge-triggered locally.
+    // isn't predicted (see match-view.js's ProjectileView) — it's just
+    // relayed to the server, which edge-triggers/cooldown-gates it (see
+    // abilities.js's stepPrimaryAbility) the same way `jump` is
+    // edge-triggered locally.
     const input = { left: false, right: false, jump: false, fire: false, dash: false, buyUpgrade: null };
     // Tracks the last movement direction, mirroring server.js's
     // Character.facing purely locally — used only to place the muzzle flash

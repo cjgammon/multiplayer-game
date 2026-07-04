@@ -8,7 +8,7 @@
 // own fixedUpdate), matching melee.js/structures.js's shape so both stay
 // unit-testable against plain object/Base stand-ins rather than the
 // un-exported Character class.
-import { SPAWN_Y, CHAR_HP } from "./shared.js";
+import { SPAWN_Y, CHAR_HP } from "../shared/shared.js";
 
 export const RESPAWN_TIME = 3; // seconds a downed Character waits before respawning
 
