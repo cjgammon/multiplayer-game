@@ -82,8 +82,9 @@ class Character extends Entity {
   // through netState()/applyNetState() below like grounded/prevJump does.
   dashCooldown = 0;
   dashTimer = 0;
-  // Server-authoritative only (see shared.js's CHAR_HP) — not predicted or
-  // netState'd, same as Minion/Tower/Base hp.
+  // Server-authoritative — not predicted, same as Minion/Tower/Base hp.
+  // netState'd (below) only for the client's dev HP HUD; nothing in
+  // stepCharacter/reconciliation reads it back.
   hp = CHAR_HP;
   // Death/respawn (#9) — set by respawn.js's downCharacter once melee.js's
   // swing brings hp to 0 (see MinionDirector.resolveMeleeSwing below).
@@ -128,7 +129,8 @@ class Character extends Entity {
   // the engine doesn't know about — stale values here let a replayed tick
   // re-fire or drop a jump. applyNetState is guaranteed to run before the
   // replay (see SimulateFn's doc comment in gamekit). `downed` (#9) lets the
-  // client hide the sprite while it's out of play.
+  // client hide the sprite while it's out of play; `hp` drives the dev HP
+  // HUD only — no gameplay logic client-side reads it.
   netState() {
     return {
       color: this.color,
@@ -138,6 +140,7 @@ class Character extends Entity {
       facing: this.facing,
       prevDash: this._prevDash,
       dashCooldown: this.dashCooldown,
+      hp: this.hp,
       dashTimer: this.dashTimer,
       downed: this.downed,
     };

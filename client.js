@@ -74,6 +74,7 @@ function main() {
   const readyToggle = document.getElementById("ready-toggle");
   const roomError = document.getElementById("room-error");
   const hintEl = document.getElementById("hint");
+  const hpHudEl = document.getElementById("hp-hud");
 
   let ws = null;
   let latestState = null;
@@ -235,6 +236,7 @@ function main() {
     lobbyEl.hidden = true;
     canvas.hidden = false;
     hintEl.hidden = false;
+    hpHudEl.hidden = false;
     if (devPanelJumpBtn) devPanelJumpBtn.disabled = true;
 
     // Selects which Map to render — must match the server's MAP_ID env var
@@ -263,6 +265,9 @@ function main() {
       // callback below can skip predicting movement for a Character that's
       // out of play, same as the server's Character.fixedUpdate does.
       downed = false;
+      // Dev HP HUD only (see the hpHudEl block below) — no gameplay logic
+      // reads this client-side.
+      hp = 0;
 
       constructor() {
         super();
@@ -298,6 +303,7 @@ function main() {
           this.downed = state.downed;
           this.visible = !state.downed;
         }
+        if (state.hp !== undefined) this.hp = state.hp;
       }
     }
 
@@ -391,7 +397,22 @@ function main() {
             this._following = true;
           }
         }
+        updateHpHud(this.client);
       }
+    }
+
+    // Dev-only readout so hp (server-authoritative, never rendered on the
+    // sprite itself — see server.js's Character.hp comment) is actually
+    // visible while testing damage/death/respawn (#9): one colored dot +
+    // number per live CharacterView, dot tinted the same as the sprite.
+    function updateHpHud(client) {
+      const rows = [];
+      for (const entity of client.entities.values()) {
+        if (!(entity instanceof CharacterView)) continue;
+        const color = `#${entity.tint.toString(16).padStart(6, "0")}`;
+        rows.push(`<span style="color:${color}">●</span> ${entity.downed ? "downed" : entity.hp}`);
+      }
+      hpHudEl.innerHTML = rows.join("&nbsp;&nbsp;");
     }
 
     const scene = new WorldScene(transport, factory, {
