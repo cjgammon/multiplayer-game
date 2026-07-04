@@ -379,17 +379,23 @@ class MinionDirector extends Entity {
   // since PROJECTILE_SPEED can otherwise step a Projectile clean over a thin
   // Minion within one tick. Sweeps the whole scene rather than just
   // minions/towers, same shape as _resolveMinionCombat's full-scene overlap;
-  // canHit filters out everything else (Characters, other Projectiles).
-  // Spent on its first hit, same one-shot rule as resolveStructureDamage's
-  // Minion attacks.
+  // canHit filters to enemy Minions/Towers/Characters, same set melee.js's
+  // canHitMelee allows. Spent on its first hit, same one-shot rule as
+  // resolveStructureDamage's Minion attacks. A Character reaching 0 hp is
+  // downed (#9, see respawn.js's downCharacter) rather than despawned — the
+  // same non-elimination flow resolveMeleeSwing triggers on a melee kill —
+  // identified structurally by its `character` field, same as canHit does.
   resolveProjectileHit(projectile) {
     this.game.scene.overlapSwept(projectile, this.game.scene.root, (proj, target) => {
       if (proj.spent || !canHit(proj, target)) return;
       const { destroyed } = applyProjectileDamage(proj, target);
       proj.spent = true;
-      if (destroyed) {
-        if (target instanceof Minion) this._killMinion(target);
-        else this.game.net.despawn(target.netId);
+      if (!destroyed) return;
+      if (target instanceof Minion) this._killMinion(target);
+      else if (target instanceof Tower) this.game.net.despawn(target.netId);
+      else if (target.character !== undefined) {
+        this.dropSolar(target.x, target.y, SOLAR_PER_CHARACTER);
+        downCharacter(target);
       }
     });
   }

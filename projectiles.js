@@ -1,11 +1,14 @@
 // projectiles.js — the ranged Character's Primary Ability: fired in a
-// straight line, damages enemy Minions and (neutral) Towers using the same
-// HP/damage pattern as Minion combat (see minions.js/structures.js). Not
-// predicted client-side — CONTEXT.md only calls out the dash Secondary
-// Ability for that — so like Minion, this only needs to run in the server's
-// authoritative fixedUpdate. Its cooldown/edge-trigger bookkeeping comes from
-// abilities.js's stepPrimaryAbility, the same generic step melee.js's melee
-// swing uses — see that module for the melee kit's counterpart to this one.
+// straight line, damages enemy Minions, (neutral) Towers, and enemy
+// Characters using the same HP/damage pattern as Minion combat (see
+// minions.js/structures.js) — a Character reaching 0 hp here is downed by the
+// caller (#9, see server.js's resolveProjectileHit and respawn.js), the same
+// flow melee.js's swing already triggers. Not predicted client-side —
+// CONTEXT.md only calls out the dash Secondary Ability for that — so like
+// Minion, this only needs to run in the server's authoritative fixedUpdate.
+// Its cooldown/edge-trigger bookkeeping comes from abilities.js's
+// stepPrimaryAbility, the same generic step melee.js's melee swing uses —
+// see that module for the melee kit's counterpart to this one.
 //
 // Unlike Minion (which moves itself but leaves combat resolution to a
 // director-run pass over the whole scene — see server.js's MinionDirector),
@@ -74,15 +77,19 @@ export class Projectile extends Entity {
 }
 
 /**
- * Whether a live Projectile can hit `target`: an enemy Minion, or any
- * (neutral) Tower still standing — Towers aren't Team-owned (see
- * structures.js's TOWER_COLOR comment), so any Team's projectile can damage
- * one, matching how any Team's Minion already can via canEngageTower.
+ * Whether a live Projectile can hit `target`: an enemy Minion, any (neutral)
+ * Tower still standing — Towers aren't Team-owned (see structures.js's
+ * TOWER_COLOR comment), so any Team's projectile can damage one, matching how
+ * any Team's Minion already can via canEngageTower — or an enemy Character.
+ * Characters aren't a class this module can import without a cycle back to
+ * server.js (which defines it), so one is identified structurally by its
+ * `character` field, same as melee.js's canHitMelee does.
  */
 export function canHit(projectile, target) {
   if (target.hp <= 0) return false;
   if (target instanceof Minion) return target.team !== projectile.team;
   if (target instanceof Tower) return true;
+  if (target.character !== undefined) return target.team !== projectile.team;
   return false;
 }
 
