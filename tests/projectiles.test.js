@@ -6,9 +6,7 @@ import {
   Projectile,
   PROJECTILE_SPEED,
   PROJECTILE_DAMAGE,
-  PROJECTILE_COOLDOWN,
   PROJECTILE_LIFETIME,
-  stepPrimaryAbility,
   canHit,
   applyProjectileDamage,
 } from "../projectiles.js";
@@ -60,45 +58,6 @@ describe("Projectile movement", () => {
     p.fixedUpdate(1);
     expect(calls).toEqual([p]); // no second call once spent
   });
-});
-
-describe("stepPrimaryAbility", () => {
-  function character() {
-    return { primaryCooldown: 0, facing: 1 };
-  }
-
-  test("requests a shot on the fire key's rising edge when off cooldown", () => {
-    const c = character();
-    expect(stepPrimaryAbility(c, { fire: true }, 1)).toBe(true);
-    expect(c.primaryCooldown).toBe(PROJECTILE_COOLDOWN);
-  });
-
-  test("does not fire when the fire key isn't pressed", () => {
-    const c = character();
-    expect(stepPrimaryAbility(c, { fire: false }, 1)).toBe(false);
-  });
-
-  test("does not spam-fire while the key is held", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    const fired = stepPrimaryAbility(c, { fire: true }, 0.01);
-    expect(fired).toBe(false);
-  });
-
-  test("re-fires on a fresh press once the cooldown has elapsed", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    stepPrimaryAbility(c, { fire: false }, PROJECTILE_COOLDOWN); // release; cooldown elapses
-    expect(stepPrimaryAbility(c, { fire: true }, 0)).toBe(true);
-  });
-
-  test("cannot fire again before the cooldown elapses even on a fresh press", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    stepPrimaryAbility(c, { fire: false }, 0.01); // release; cooldown still active
-    expect(stepPrimaryAbility(c, { fire: true }, 0)).toBe(false);
-  });
-
 });
 
 describe("canHit", () => {

@@ -19,6 +19,7 @@ import {
 import { getMap, buildMapData, worldSize, TOWER_COLOR, TOWER_SIZE, BASE_SIZE } from "./maps.js";
 import { MINION_W, MINION_H } from "./minions.js";
 import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "./projectiles.js";
+import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_COOLDOWN } from "./melee.js";
 
 const canvas = document.getElementById("view");
 
@@ -101,7 +102,8 @@ function main() {
     btn.addEventListener("click", () => send({ k: "pick-character", character: character.id }));
     characterPickerEl.appendChild(btn);
   }
-  // Only one Character exists so far (from #1) — pre-select the sole option.
+  // Pre-select the first Character in the roster so readying up doesn't
+  // require an explicit pick.
   send({ k: "pick-character", character: CHARACTERS[0].id }); // queued until the socket opens
 
   function connect(onOpenMsg) {
@@ -128,7 +130,12 @@ function main() {
       return;
     }
     if (msg.k === "match-start") {
-      startMatch(new LiveTransport(ws));
+      // The last room-state broadcast still reflects everyone's final
+      // Team/Character picks (see room.js's LobbyManager — it broadcasts on
+      // every pick/ready before ever sending match-start), so this is the
+      // local player's picked kit id for the cosmetic-feedback gating below.
+      const me = latestState.players.find((p) => p.id === latestState.you);
+      startMatch(new LiveTransport(ws), me.character);
       return;
     }
   }
@@ -224,7 +231,7 @@ function main() {
     send({ k: "set-ready", ready: !me.ready });
   });
 
-  function startMatch(transport) {
+  function startMatch(transport, myCharacter) {
     lobbyEl.hidden = true;
     canvas.hidden = false;
     hintEl.hidden = false;
@@ -393,19 +400,23 @@ function main() {
     // way from the same input, so this never needs to be synced.
     let localFacing = 1;
     // Real time (not tick-based — this fires from a DOM event, off the fixed
-    // step), mirroring PROJECTILE_COOLDOWN so the flash doesn't fire faster
-    // than the server would actually spawn a Projectile. This is a cosmetic
-    // gate only, not authoritative — the server still independently
-    // cooldown-gates the real shot.
+    // step), mirroring the local kit's own Primary Ability cooldown so the
+    // flash doesn't fire faster than the server would actually resolve the
+    // real Ability. This is a cosmetic gate only, not authoritative — the
+    // server still independently cooldown-gates the real Ability.
     let nextFlashReadyAt = 0;
+    // The ranged kit is Naut (see shared.js's CHARACTERS); any other pick
+    // (currently only the melee Brawler) gets the melee swing's cosmetic
+    // instead — branched once here rather than in every input handler below.
+    const isMelee = myCharacter !== CHARACTERS[0].id;
 
-    // Immediate, local-only feedback for a fire press: the real Projectile
-    // isn't predicted (see the comment above), so without this a press feels
-    // laggy — it's ~100ms+ (interpolation buffer + round trip) before
-    // anything appears. Not net-synced, so other players never see it; it
-    // exists purely to make pressing F feel responsive. Spawn math mirrors
-    // server.js's Character._firePrimary exactly, so the flash lines up with
-    // where the real Projectile will appear moments later.
+    // Immediate, local-only feedback for a fire press: neither kit's Primary
+    // Ability is predicted (see the comments on projectiles.js/melee.js), so
+    // without this a press feels laggy — it's ~100ms+ (interpolation buffer +
+    // round trip) before anything appears. Not net-synced, so other players
+    // never see it; it exists purely to make pressing F feel responsive.
+    // Spawn math mirrors server.js's KITS.fire exactly, so the flash lines up
+    // with where the real Projectile/swing will resolve moments later.
     function spawnMuzzleFlash(facing) {
       const local = scene.client.entities.get(scene.client.you);
       if (!local) return;
@@ -427,6 +438,26 @@ function main() {
       });
     }
 
+    // Melee counterpart to spawnMuzzleFlash: sized/positioned like
+    // melee.js's meleeHitbox rather than a Projectile, and tinted
+    // differently so the two kits read as visually distinct.
+    function spawnMeleeFlash(facing) {
+      const local = scene.client.entities.get(scene.client.you);
+      if (!local) return;
+      const flash = new Sprite();
+      flash.width = MELEE_RANGE;
+      flash.height = local.height + MELEE_HEIGHT_PAD * 2;
+      flash.tint = 0xffcc33;
+      flash.setPosition(
+        facing > 0 ? local.x + local.width : local.x - MELEE_RANGE,
+        local.y - MELEE_HEIGHT_PAD,
+      );
+      scene.add(flash);
+      scene.tween(flash, { scaleX: 1.4, scaleY: 1.1 }, 0.1, {
+        onComplete: () => flash.kill(),
+      });
+    }
+
     const KEYS = {
       ArrowLeft: "left", KeyA: "left",
       ArrowRight: "right", KeyD: "right",
@@ -443,8 +474,9 @@ function main() {
       if (down && dir === "fire") {
         const now = performance.now();
         if (now >= nextFlashReadyAt) {
-          nextFlashReadyAt = now + PROJECTILE_COOLDOWN * 1000;
-          spawnMuzzleFlash(localFacing);
+          nextFlashReadyAt = now + (isMelee ? MELEE_COOLDOWN : PROJECTILE_COOLDOWN) * 1000;
+          if (isMelee) spawnMeleeFlash(localFacing);
+          else spawnMuzzleFlash(localFacing);
         }
       }
       scene.client.setLocalInput(input); // predicted + sent automatically

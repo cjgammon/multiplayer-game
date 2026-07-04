@@ -1,9 +1,11 @@
-// projectiles.js — a Character's Primary Ability projectile: fired in a
+// projectiles.js — the ranged Character's Primary Ability: fired in a
 // straight line, damages enemy Minions and (neutral) Towers using the same
 // HP/damage pattern as Minion combat (see minions.js/structures.js). Not
 // predicted client-side — CONTEXT.md only calls out the dash Secondary
 // Ability for that — so like Minion, this only needs to run in the server's
-// authoritative fixedUpdate.
+// authoritative fixedUpdate. Its cooldown/edge-trigger bookkeeping comes from
+// abilities.js's stepPrimaryAbility, the same generic step melee.js's melee
+// swing uses — see that module for the melee kit's counterpart to this one.
 //
 // Unlike Minion (which moves itself but leaves combat resolution to a
 // director-run pass over the whole scene — see server.js's MinionDirector),
@@ -62,30 +64,6 @@ export class Projectile extends Entity {
   netState() {
     return { team: this.team };
   }
-}
-
-/**
- * Advance a Character's Primary Ability state one fixed step: cooldown
- * countdown and an edge-triggered fire request exactly like shared.js's
- * stepCharacter jump handling — holding the fire key doesn't spam-fire, only
- * the moment it's pressed does, and even then only once `primaryCooldown` has
- * elapsed. Fires in `character.facing`'s direction — tracked by
- * stepCharacter (called first each tick, see server.js's Character.fixedUpdate)
- * since dash needs that same facing state. Returns whether to spawn a
- * projectile this tick; the caller (server.js's Character.fixedUpdate) does
- * the actual spawning since that needs the net layer, not this pure function.
- */
-export function stepPrimaryAbility(character, input, dt) {
-  if (character.primaryCooldown > 0) character.primaryCooldown -= dt;
-
-  const requesting = !!input.fire && !character._prevFire;
-  character._prevFire = !!input.fire;
-
-  if (requesting && character.primaryCooldown <= 0) {
-    character.primaryCooldown = PROJECTILE_COOLDOWN;
-    return true;
-  }
-  return false;
 }
 
 /**

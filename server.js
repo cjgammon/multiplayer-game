@@ -10,17 +10,55 @@ import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
   TICK_RATE, PORT, TILE, TEAMS,
-  CHAR_W, CHAR_H, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS,
+  CHAR_W, CHAR_H, CHAR_HP, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS, CHARACTERS,
   stepCharacter,
 } from "./shared.js";
+import { stepPrimaryAbility } from "./abilities.js";
 import { getMap, buildMapData, worldSize } from "./maps.js";
 import { LobbyManager } from "./room.js";
 import { Minion, canEngage, resolveMinionCombat, laneWaypoints, MINION_SPAWN_INTERVAL } from "./minions.js";
 import { Tower, Base, canEngageTower, canEngageBase, resolveStructureDamage } from "./structures.js";
 import {
-  Projectile, PROJECTILE_W, PROJECTILE_H,
-  stepPrimaryAbility, canHit, applyProjectileDamage,
+  Projectile, PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN,
+  canHit, applyProjectileDamage,
 } from "./projectiles.js";
+import {
+  MELEE_COOLDOWN,
+  meleeHitbox, canHitMelee, applyMeleeDamage,
+} from "./melee.js";
+
+// One entry per shared.js's CHARACTERS id: each kit's Primary Ability
+// cooldown and its fire effect. The two kits' Primary Abilities otherwise
+// share everything — the generic stepPrimaryAbility cooldown/edge-trigger
+// step above, and (via stepCharacter) the same dash Secondary Ability — so
+// this table is the one place kit-specific behavior lives, rather than
+// Character branching on `this.character` itself (see #8's acceptance
+// criteria on not duplicating ranged-Character-specific logic).
+const KITS = {
+  [CHARACTERS[0].id]: {
+    cooldown: PROJECTILE_COOLDOWN,
+    // Spawns a Projectile just past the Character's leading edge, traveling
+    // toward `facing`. Delegates to the combat director (rather than
+    // net.spawn'ing directly) so the Projectile is tracked for hit
+    // resolution the same way Minions are tracked — see
+    // MinionDirector.spawnProjectile.
+    fire(character) {
+      const x = character.facing > 0
+        ? character.x + character.width
+        : character.x - PROJECTILE_W;
+      const y = character.y + character.height / 2 - PROJECTILE_H / 2;
+      character.game.combatDirector.spawnProjectile(x, y, character.team, character.facing);
+    },
+  },
+  [CHARACTERS[1].id]: {
+    cooldown: MELEE_COOLDOWN,
+    // Resolves instantly against a hitbox in front of the Character — see
+    // MinionDirector.resolveMeleeSwing.
+    fire(character) {
+      character.game.combatDirector.resolveMeleeSwing(character);
+    },
+  },
+};
 
 // Selects which Map to run — the client must be pointed at the same one
 // (its `?map=` query param) since both sides build the Tilemap locally.
@@ -43,6 +81,9 @@ class Character extends Entity {
   // through netState()/applyNetState() below like grounded/prevJump does.
   dashCooldown = 0;
   dashTimer = 0;
+  // Server-authoritative only (see shared.js's CHAR_HP) — not predicted or
+  // netState'd, same as Minion/Tower/Base hp.
+  hp = CHAR_HP;
 
   constructor(x, y, team, character, game) {
     super(x, y);
@@ -52,25 +93,17 @@ class Character extends Entity {
     this.maxVelocity.set(MAX_VEL_X, MAX_VEL_Y);
     this.color = TEAM_COLORS[team];
     this.character = character;
+    this.kit = KITS[character] ?? KITS[CHARACTERS[0].id];
     this.team = team;
     this.game = game;
   }
 
   // The authoritative simulation: gravity, run, jump, tilemap collision, then
-  // the Primary Ability's cooldown/facing/fire-edge state (see #6).
+  // the Primary Ability's cooldown/facing/fire-edge state (see #6) and its
+  // kit-specific effect (see the KITS table above).
   fixedUpdate(dt) {
     stepCharacter(this, this.input, dt, tilemap);
-    if (stepPrimaryAbility(this, this.input, dt)) this._firePrimary();
-  }
-
-  // Spawns a Projectile just past the Character's leading edge, traveling
-  // toward `facing`. Delegates to the combat director (rather than
-  // net.spawn'ing directly) so the Projectile is tracked for hit resolution
-  // the same way Minions are tracked — see MinionDirector.spawnProjectile.
-  _firePrimary() {
-    const x = this.facing > 0 ? this.x + this.width : this.x - PROJECTILE_W;
-    const y = this.y + this.height / 2 - PROJECTILE_H / 2;
-    this.game.combatDirector.spawnProjectile(x, y, this.team, this.facing);
+    if (stepPrimaryAbility(this, this.input, dt, this.kit.cooldown)) this.kit.fire(this);
   }
 
   // Per-entity payload the client reads via CharacterView.applyNetState.
@@ -256,6 +289,24 @@ class MinionDirector extends Entity {
         if (target instanceof Minion) this._killMinion(target);
         else this.game.net.despawn(target.netId);
       }
+    });
+  }
+
+  // Resolves the melee Character's Primary Ability the instant it triggers
+  // (see KITS above) — unlike a Projectile, there's no traveling entity or
+  // lifetime to track, just one immediate scene.overlap against a hitbox in
+  // front of `character` (see melee.js's meleeHitbox). Sweeps the whole scene
+  // same as _resolveMinionCombat/resolveProjectileHit; canHitMelee filters to
+  // enemy Minions/Towers/Characters. A Character reaching 0 hp is left as-is
+  // — see melee.js's header comment on why (death/respawn is #9's scope).
+  resolveMeleeSwing(character) {
+    const hitbox = meleeHitbox(character);
+    this.game.scene.overlap(hitbox, this.game.scene.root, (_hitbox, target) => {
+      if (!canHitMelee(character, target)) return;
+      const { destroyed } = applyMeleeDamage(target);
+      if (!destroyed) return;
+      if (target instanceof Minion) this._killMinion(target);
+      else if (target instanceof Tower) this.game.net.despawn(target.netId);
     });
   }
 
