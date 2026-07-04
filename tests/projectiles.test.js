@@ -100,8 +100,23 @@ describe("canHit", () => {
     expect(canHit(projectile(TEAM_A), tower)).toBe(false);
   });
 
-  test("non-Minion, non-Tower entities are never hit", () => {
+  test("non-Minion, non-Tower, non-Character entities are never hit", () => {
     expect(canHit(projectile(TEAM_A), { hp: 10 })).toBe(false);
+  });
+
+  test("can hit an enemy Character", () => {
+    const target = { team: TEAM_B, hp: 100, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(true);
+  });
+
+  test("cannot hit a same-team Character", () => {
+    const target = { team: TEAM_A, hp: 100, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(false);
+  });
+
+  test("cannot hit a downed Character (hp already <= 0)", () => {
+    const target = { team: TEAM_B, hp: 0, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(false);
   });
 });
 
