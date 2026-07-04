@@ -4,6 +4,8 @@
 // set of open Rooms and speaks the JSON lobby protocol over each connection's
 // Transport until that connection is handed off to a per-Match ServerGame.
 
+import { MAX_TEAM_SIZE, MAX_ROOM_SIZE } from "./shared.js";
+
 const ROOM_CODE_LENGTH = 4;
 // Excludes visually ambiguous characters (0/O, 1/I/L).
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -43,6 +45,19 @@ class Room {
 
   get isEmpty() {
     return this.players.size === 0;
+  }
+
+  get isFull() {
+    return this.players.size >= MAX_ROOM_SIZE;
+  }
+
+  /** How many players (other than `excludingId`, if given) are on `team`. */
+  teamSize(team, excludingId) {
+    let count = 0;
+    for (const p of this.players.values()) {
+      if (p.team === team && p.id !== excludingId) count++;
+    }
+    return count;
   }
 
   get allReady() {
@@ -124,6 +139,10 @@ export class LobbyManager {
           send(transport, { k: "error", message: "Room not found." });
           return;
         }
+        if (target.isFull) {
+          send(transport, { k: "error", message: "Room is full." });
+          return;
+        }
         playerId = this._nextPlayerId++;
         room = target;
         room.addPlayer(playerId, transport);
@@ -135,6 +154,10 @@ export class LobbyManager {
       const me = room.players.get(playerId);
 
       if (msg.k === "pick-team") {
+        if (room.teamSize(msg.team, playerId) >= MAX_TEAM_SIZE) {
+          send(transport, { k: "error", message: "That Team is full." });
+          return;
+        }
         me.team = msg.team;
         me.ready = false; // re-confirm readiness against the new choice
         broadcast();

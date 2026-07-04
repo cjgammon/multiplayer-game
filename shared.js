@@ -56,6 +56,12 @@ export const CHAR_HP = 100;
 // stepPrimaryAbility), differing only in cooldown length and fire effect.
 export const TEAMS = ["A", "B"];
 export const TEAM_COLORS = { A: 0xe8543e, B: 0x3ea1e8 };
+
+// 3v3, matching Awesomenauts (see CONTEXT.md's Team glossary) — the lobby's
+// per-Team and per-Room caps (room.js's LobbyManager) and the client's Team
+// picker (client.js) both read these rather than hardcoding 3/6.
+export const MAX_TEAM_SIZE = 3;
+export const MAX_ROOM_SIZE = MAX_TEAM_SIZE * TEAMS.length;
 export const CHARACTERS = [
   { id: "naut", name: "Naut" },
   { id: "brawler", name: "Brawler" },

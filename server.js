@@ -10,7 +10,7 @@ import { ServerGame, WebSocketServer, ServerTransport } from "@cjgammon/gamekit-
 import { Entity, Tilemap } from "@cjgammon/gamekit";
 import {
   TICK_RATE, PORT, TILE, TEAMS,
-  CHAR_W, CHAR_H, CHAR_HP, DRAG_X, MAX_VEL_X, MAX_VEL_Y, SPAWN_Y, TEAM_COLORS, CHARACTERS,
+  CHAR_W, CHAR_H, CHAR_HP, DRAG_X, MAX_VEL_X, MAX_VEL_Y, TEAM_COLORS, CHARACTERS,
   stepCharacter,
 } from "./shared.js";
 import { stepPrimaryAbility } from "./abilities.js";
@@ -30,7 +30,7 @@ import {
   SolarPickup, SOLAR_PER_MINION, SOLAR_PER_CHARACTER,
   canCollect, resolveCollect, canPurchaseUpgrade, resolvePurchaseUpgrade,
 } from "./solar.js";
-import { downCharacter, stepRespawn } from "./respawn.js";
+import { downCharacter, stepRespawn, teamSpawnPoint } from "./respawn.js";
 
 // One entry per shared.js's CHARACTERS id: each kit's Primary Ability
 // cooldown and its fire effect. The two kits' Primary Abilities otherwise
@@ -450,24 +450,29 @@ function startMatch(room) {
       playerType: "character",
       createPlayer: (info) => {
         const player = players[info.index];
-        return new Character(
-          TILE * 3 + info.index * TILE * 2,
-          SPAWN_Y,
-          player.team,
-          player.character,
-          game,
-        );
+        // Spawns at the player's own Team's Base — with up to MAX_TEAM_SIZE
+        // (3) Characters per Team (#11), spawning by global join order
+        // instead could put a Team B player on Team A's side of the Map.
+        // teamSpawnPoint spreads this Team's Characters across the Base's
+        // own width (rather than respawn.js's stepRespawn, which always
+        // returns a downed Character solo to dead-center) so a full Team
+        // doesn't spawn stacked on itself.
+        const base = game.combatDirector.baseForTeam(player.team);
+        const teammates = players.filter((p) => p.team === player.team);
+        const indexOnTeam = teammates.indexOf(player);
+        const { x, y } = teamSpawnPoint(base, CHAR_W, indexOnTeam, teammates.length);
+        return new Character(x, y, player.team, player.character, game);
       },
     },
   );
 
-  for (const player of players) game.accept(player.transport);
-  // Exposed on `game` so Character._firePrimary can reach it without a
-  // constructor-order dependency: createPlayer above runs during
-  // game.accept(), before this Director exists, but Character.fixedUpdate
-  // (where firing happens) only runs after game.start() below.
+  // Built before game.accept() below (unlike the Towers/Bases it net.spawns,
+  // this only needs game.net, which the ServerGame constructor above already
+  // set up) so createPlayer's baseForTeam lookup above has something to find
+  // — accept() is what triggers createPlayer, via NetServer.
   game.combatDirector = new MinionDirector(game);
   game.scene.add(game.combatDirector);
+  for (const player of players) game.accept(player.transport);
   game.start();
 }
 
