@@ -42,9 +42,8 @@ export const SPAWN_Y = TILE * 2;
 
 // Character HP — server-authoritative only; not predicted or netState'd,
 // same as Minion/Tower/Base hp, since no Ability that damages a Character
-// (melee.js's swing) is client-predicted either. Death/respawn handling is
-// #9's scope, not this one's — a Character can reach 0 here and just sit at
-// 0 until #9 adds a response.
+// (melee.js's swing) is client-predicted either. A Character reaching 0 here
+// is downed and timer-respawned at its own Team's Base — see respawn.js.
 export const CHAR_HP = 100;
 
 // Lobby: the two Teams a player can join, and the Character roster a player

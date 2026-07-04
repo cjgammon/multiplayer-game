@@ -10,6 +10,7 @@ import { Entity } from "@cjgammon/gamekit";
 
 export const SOLAR_PICKUP_SIZE = 6;
 export const SOLAR_PER_MINION = 5;
+export const SOLAR_PER_CHARACTER = 20; // a Character kill is worth far more than one Minion
 
 // One-time-per-Match Upgrades a Character can buy at their own Team's Base
 // with accumulated Solar. Each key is both the id sent from the client
@@ -22,11 +23,10 @@ export const UPGRADES = {
 };
 
 /**
- * A pickup of collectible Solar, dropped at a defeated Minion's (and,
- * once #9 lands, a defeated Character's) death location — see server.js's
- * MinionDirector.dropSolar. Any Character walking over one collects it,
- * regardless of Team (see CONTEXT.md: Solar isn't described as Team-owned,
- * unlike a Tower/Base).
+ * A pickup of collectible Solar, dropped at a defeated Minion's or
+ * Character's death location — see server.js's MinionDirector.dropSolar.
+ * Any Character walking over one collects it, regardless of Team (see
+ * CONTEXT.md: Solar isn't described as Team-owned, unlike a Tower/Base).
  */
 export class SolarPickup extends Entity {
   constructor(x, y, amount) {

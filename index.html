@@ -19,6 +19,10 @@
         position: fixed; bottom: 12px; left: 0; right: 0;
         text-align: center; color: #888; font: 13px system-ui, sans-serif;
       }
+      #hp-hud {
+        position: fixed; top: 12px; left: 0; right: 0;
+        text-align: center; color: #ddd; font: 13px system-ui, sans-serif;
+      }
       #winner {
         position: fixed; top: 40%; left: 0; right: 0;
         text-align: center; color: #fff; font: bold 28px system-ui, sans-serif;
@@ -78,6 +82,7 @@
     <canvas id="view" hidden></canvas>
     <div id="hint" hidden>Arrows/WASD to move, Up/W/Space to jump, F to fire, Shift to dash, E/R to buy a damage/speed Upgrade at your own Base &middot; open a second window to see it synced</div>
     <div id="solar" hidden>Solar: <span id="solar-amount">0</span></div>
+    <div id="hp-hud" hidden></div>
     <div id="dev-panel" hidden>
       <div id="dev-panel-body" hidden>
         <button id="dev-panel-jump">Jump to Game</button>

@@ -77,6 +77,7 @@ function main() {
   const hintEl = document.getElementById("hint");
   const solarEl = document.getElementById("solar");
   const solarAmountEl = document.getElementById("solar-amount");
+  const hpHudEl = document.getElementById("hp-hud");
 
   let ws = null;
   let latestState = null;
@@ -239,6 +240,7 @@ function main() {
     canvas.hidden = false;
     hintEl.hidden = false;
     solarEl.hidden = false;
+    hpHudEl.hidden = false;
     if (devPanelJumpBtn) devPanelJumpBtn.disabled = true;
 
     // Selects which Map to render — must match the server's MAP_ID env var
@@ -268,6 +270,13 @@ function main() {
       // is display-only (read by the HUD update in WorldScene.update below).
       speedMultiplier = 1;
       solar = 0;
+      // Downed (#9) — mirrors server.js's Character field so the `simulate`
+      // callback below can skip predicting movement for a Character that's
+      // out of play, same as the server's Character.fixedUpdate does.
+      downed = false;
+      // Dev HP HUD only (see the hpHudEl block below) — no gameplay logic
+      // reads this client-side.
+      hp = 0;
 
       constructor() {
         super();
@@ -294,6 +303,18 @@ function main() {
         if (state.dashTimer !== undefined) this.dashTimer = state.dashTimer;
         if (state.speedMultiplier !== undefined) this.speedMultiplier = state.speedMultiplier;
         if (state.solar !== undefined) this.solar = state.solar;
+        // Downed (#9): hidden rather than despawned — the server keeps
+        // simulating/networking the same entity through its respawn timer
+        // (see respawn.js's header comment on why), so `visible` (respected
+        // by gamekit's SceneWalker) is the seam to hide it without touching
+        // `alive`. Also read by the `simulate` callback below, so the local
+        // player's own prediction freezes the same way the server's
+        // Character.fixedUpdate does instead of drifting a hidden entity.
+        if (state.downed !== undefined) {
+          this.downed = state.downed;
+          this.visible = !state.downed;
+        }
+        if (state.hp !== undefined) this.hp = state.hp;
       }
     }
 
@@ -404,12 +425,34 @@ function main() {
         // Solar HUD (see #10) — display-only, driven straight off the local
         // Character's synced `solar` field (see CharacterView.applyNetState).
         solarAmountEl.textContent = local.solar;
+        updateHpHud(this.client);
       }
+    }
+
+    // Dev-only readout so hp (server-authoritative, never rendered on the
+    // sprite itself — see server.js's Character.hp comment) is actually
+    // visible while testing damage/death/respawn (#9): one colored dot +
+    // number per live CharacterView, dot tinted the same as the sprite.
+    function updateHpHud(client) {
+      const rows = [];
+      for (const entity of client.entities.values()) {
+        if (!(entity instanceof CharacterView)) continue;
+        const color = `#${entity.tint.toString(16).padStart(6, "0")}`;
+        rows.push(`<span style="color:${color}">●</span> ${entity.downed ? "downed" : entity.hp}`);
+      }
+      hpHudEl.innerHTML = rows.join("&nbsp;&nbsp;");
     }
 
     const scene = new WorldScene(transport, factory, {
       // Predict OUR Character by running the SAME movement the server runs.
-      simulate: (entity, input, dt) => stepCharacter(entity, input, dt, tilemap),
+      // Skips prediction while downed (#9), mirroring the server's
+      // Character.fixedUpdate guard — otherwise the local (hidden) entity
+      // would keep drifting from replayed input during the respawn timer,
+      // dragging the camera (which follows this same entity) along with it.
+      simulate: (entity, input, dt) => {
+        if (entity.downed) return;
+        stepCharacter(entity, input, dt, tilemap);
+      },
     });
 
     RenderGame.create(canvas, { fov: WORLD_W, tickRate: TICK_RATE }).then((game) => {

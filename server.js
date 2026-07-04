@@ -27,9 +27,10 @@ import {
   meleeHitbox, canHitMelee, applyMeleeDamage,
 } from "./melee.js";
 import {
-  SolarPickup, SOLAR_PER_MINION,
+  SolarPickup, SOLAR_PER_MINION, SOLAR_PER_CHARACTER,
   canCollect, resolveCollect, canPurchaseUpgrade, resolvePurchaseUpgrade,
 } from "./solar.js";
+import { downCharacter, stepRespawn } from "./respawn.js";
 
 // One entry per shared.js's CHARACTERS id: each kit's Primary Ability
 // cooldown and its fire effect. The two kits' Primary Abilities otherwise
@@ -87,8 +88,9 @@ class Character extends Entity {
   // through netState()/applyNetState() below like grounded/prevJump does.
   dashCooldown = 0;
   dashTimer = 0;
-  // Server-authoritative only (see shared.js's CHAR_HP) — not predicted or
-  // netState'd, same as Minion/Tower/Base hp.
+  // Server-authoritative — not predicted, same as Minion/Tower/Base hp.
+  // netState'd (below) only for the client's dev HP HUD; nothing in
+  // stepCharacter/reconciliation reads it back.
   hp = CHAR_HP;
   // Solar economy (see solar.js and #10's acceptance criteria): a running
   // total of Solar collected from SolarPickups, which upgradeId Upgrades
@@ -104,6 +106,12 @@ class Character extends Entity {
   upgrades = {};
   damageMultiplier = 1;
   speedMultiplier = 1;
+  // Death/respawn (#9) — set by respawn.js's downCharacter once melee.js's
+  // swing brings hp to 0 (see MinionDirector.resolveMeleeSwing below).
+  // `downed` is netState'd (below) so the client can hide the sprite; the
+  // countdown itself is server-authoritative only, same as hp.
+  downed = false;
+  respawnTimer = 0;
 
   constructor(x, y, team, character, game) {
     super(x, y);
@@ -123,8 +131,16 @@ class Character extends Entity {
   // kit-specific effect (see the KITS table above), and an Upgrade purchase
   // request (see #10) — edge-triggered the same way stepPrimaryAbility
   // edge-triggers `fire`, since a purchase is a one-shot action like firing,
-  // not continuously-held movement input.
+  // not continuously-held movement input. While downed (#9), skips all of
+  // that — no input-driven movement, firing, or purchasing — and just counts
+  // down the respawn timer instead, so a dead Character is removed from play
+  // in-place rather than lingering (see respawn.js's header comment on why
+  // this can't be a real net.spawn/despawn round-trip).
   fixedUpdate(dt) {
+    if (this.downed) {
+      stepRespawn(this, dt, this.game.combatDirector.baseForTeam(this.team));
+      return;
+    }
     stepCharacter(this, this.input, dt, tilemap);
     if (stepPrimaryAbility(this, this.input, dt, this.kit.cooldown)) this.kit.fire(this);
     const upgradeId = this.input.buyUpgrade;
@@ -146,7 +162,9 @@ class Character extends Entity {
   // speed. `solar` is included purely for HUD display — not read by any
   // predicted/replayed logic. damageMultiplier is deliberately omitted:
   // it's only read server-side (melee.js's applyMeleeDamage, this file's
-  // KITS[0].fire), so the client never needs a copy.
+  // KITS[0].fire), so the client never needs a copy. `downed` (#9) lets the
+  // client hide the sprite while it's out of play; `hp` drives the dev HP
+  // HUD only — no gameplay logic client-side reads it.
   netState() {
     return {
       color: this.color,
@@ -156,9 +174,11 @@ class Character extends Entity {
       facing: this.facing,
       prevDash: this._prevDash,
       dashCooldown: this.dashCooldown,
+      hp: this.hp,
       dashTimer: this.dashTimer,
       solar: this.solar,
       speedMultiplier: this.speedMultiplier,
+      downed: this.downed,
     };
   }
 }
@@ -240,8 +260,8 @@ class MinionDirector extends Entity {
     });
   }
 
-  // Spawns a collectible SolarPickup at a defeated Minion's (or, once #9
-  // lands, a defeated Character's) death location — see _killMinion below.
+  // Spawns a collectible SolarPickup at a defeated Minion's or Character's
+  // death location — see _killMinion and resolveMeleeSwing below.
   dropSolar(x, y, amount) {
     const pickup = new SolarPickup(x, y, amount);
     pickup.netId = this.game.net.spawn("solar", pickup);
@@ -331,6 +351,14 @@ class MinionDirector extends Entity {
     if (index !== -1) this.minions.splice(index, 1);
   }
 
+  // A Team's own Base, for a downed Character to respawn at (see #9's
+  // Character.fixedUpdate) — named accessor rather than reaching into
+  // `this.bases` directly, same shape as spawnProjectile/resolveMeleeSwing
+  // below.
+  baseForTeam(team) {
+    return this.bases.find((b) => b.team === team);
+  }
+
   // Spawns and tracks a Character's Primary Ability Projectile — called by
   // Character._firePrimary via `game.combatDirector` (see startMatch, which
   // assigns this Director there right after constructing it) rather than the
@@ -371,8 +399,12 @@ class MinionDirector extends Entity {
   // lifetime to track, just one immediate scene.overlap against a hitbox in
   // front of `character` (see melee.js's meleeHitbox). Sweeps the whole scene
   // same as _resolveMinionCombat/resolveProjectileHit; canHitMelee filters to
-  // enemy Minions/Towers/Characters. A Character reaching 0 hp is left as-is
-  // — see melee.js's header comment on why (death/respawn is #9's scope).
+  // enemy Minions/Towers/Characters. A Character reaching 0 hp is downed (#9,
+  // see respawn.js's downCharacter) rather than despawned — identified
+  // structurally by its `character` field, same as canHitMelee does, since
+  // Character isn't importable here without a cycle back to this module. Also
+  // drops Solar (#10) at its position before downCharacter resets it to the
+  // respawn spawn point, same as a killed Minion.
   resolveMeleeSwing(character) {
     const hitbox = meleeHitbox(character);
     this.game.scene.overlap(hitbox, this.game.scene.root, (_hitbox, target) => {
@@ -381,6 +413,10 @@ class MinionDirector extends Entity {
       if (!destroyed) return;
       if (target instanceof Minion) this._killMinion(target);
       else if (target instanceof Tower) this.game.net.despawn(target.netId);
+      else if (target.character !== undefined) {
+        this.dropSolar(target.x, target.y, SOLAR_PER_CHARACTER);
+        downCharacter(target);
+      }
     });
   }
 
