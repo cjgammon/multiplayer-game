@@ -60,4 +60,16 @@ describe("applyNetState", () => {
     expect(view._grounded).toBe(true);
     expect(view._prevJump).toBe(false);
   });
+
+  test("one wire field can fan out to two client properties (downed -> downed + visible)", () => {
+    const view = {};
+    applyNetState(view, { downed: true }, CHARACTER_STATE);
+    expect(view.downed).toBe(true);
+    expect(view.visible).toBe(false);
+
+    const view2 = {};
+    applyNetState(view2, { downed: false }, CHARACTER_STATE);
+    expect(view2.downed).toBe(false);
+    expect(view2.visible).toBe(true);
+  });
 });

@@ -3,8 +3,9 @@ import { TEAM_COLORS, CHAR_W, CHAR_H } from "../shared/shared.js";
 import { MINION_W, MINION_H } from "../shared/minions.js";
 import { TOWER_SIZE, BASE_SIZE, TOWER_COLOR } from "../shared/maps.js";
 import { PROJECTILE_W, PROJECTILE_H } from "../shared/projectiles.js";
+import { SOLAR_PICKUP_SIZE } from "../shared/solar.js";
 import {
-  CharacterView, MinionView, TowerView, BaseView, ProjectileView,
+  CharacterView, MinionView, TowerView, BaseView, ProjectileView, SolarPickupView,
 } from "./match-view.js";
 
 describe("CharacterView", () => {
@@ -27,6 +28,23 @@ describe("CharacterView", () => {
     view.tint = 0x111111;
     view.applyNetState(null);
     expect(view.tint).toBe(0x111111);
+  });
+
+  test("applyNetState restores dash/solar/downed state (#7/#9/#10)", () => {
+    const view = new CharacterView();
+    view.applyNetState({
+      facing: -1, prevDash: true, dashCooldown: 1.2, dashTimer: 0.05,
+      speedMultiplier: 1.3, solar: 25, hp: 40, downed: true,
+    });
+    expect(view.facing).toBe(-1);
+    expect(view._prevDash).toBe(true);
+    expect(view.dashCooldown).toBe(1.2);
+    expect(view.dashTimer).toBe(0.05);
+    expect(view.speedMultiplier).toBe(1.3);
+    expect(view.solar).toBe(25);
+    expect(view.hp).toBe(40);
+    expect(view.downed).toBe(true);
+    expect(view.visible).toBe(false); // hidden while downed, not despawned
   });
 });
 
@@ -83,5 +101,20 @@ describe("ProjectileView", () => {
     const view = new ProjectileView();
     view.applyNetState({ team: "B" });
     expect(view.tint).toBe(TEAM_COLORS.B);
+  });
+});
+
+describe("SolarPickupView", () => {
+  test("constructs at Solar's configured size, tinted gold", () => {
+    const view = new SolarPickupView();
+    expect(view.width).toBe(SOLAR_PICKUP_SIZE);
+    expect(view.height).toBe(SOLAR_PICKUP_SIZE);
+    expect(view.tint).toBe(0xffd700);
+  });
+
+  test("applyNetState is a no-op — SOLAR_STATE is empty, nothing dynamic is rendered", () => {
+    const view = new SolarPickupView();
+    view.applyNetState({ amount: 5 });
+    expect(view.tint).toBe(0xffd700);
   });
 });

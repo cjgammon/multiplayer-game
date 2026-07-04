@@ -11,13 +11,14 @@ import {
   mountUnsupportedNotice,
 } from "@cjgammon/gamekit/renderer";
 import {
-  TICK_RATE, PORT, TILE, TEAMS, CHARACTERS,
+  TICK_RATE, PORT, TILE, TEAMS, CHARACTERS, MAX_TEAM_SIZE,
   stepCharacter,
 } from "../shared/shared.js";
 import { getMap, buildMapData, worldSize } from "../shared/maps.js";
 import { PROJECTILE_W, PROJECTILE_H, PROJECTILE_COOLDOWN } from "../shared/projectiles.js";
+import { MELEE_RANGE, MELEE_HEIGHT_PAD, MELEE_COOLDOWN } from "../shared/melee.js";
 import { MSG } from "../shared/protocol.js";
-import { createWorldScene } from "./match-view.js";
+import { createWorldScene, CharacterView } from "./match-view.js";
 
 const canvas = document.getElementById("view");
 
@@ -72,6 +73,9 @@ function main() {
   const readyToggle = document.getElementById("ready-toggle");
   const roomError = document.getElementById("room-error");
   const hintEl = document.getElementById("hint");
+  const solarEl = document.getElementById("solar");
+  const solarAmountEl = document.getElementById("solar-amount");
+  const hpHudEl = document.getElementById("hp-hud");
 
   let ws = null;
   let latestState = null;
@@ -100,7 +104,8 @@ function main() {
     btn.addEventListener("click", () => send({ k: MSG.PICK_CHARACTER, character: character.id }));
     characterPickerEl.appendChild(btn);
   }
-  // Only one Character exists so far (from #1) — pre-select the sole option.
+  // Pre-select the first Character in the roster so readying up doesn't
+  // require an explicit pick.
   send({ k: MSG.PICK_CHARACTER, character: CHARACTERS[0].id }); // queued until the socket opens
 
   function connect(onOpenMsg) {
@@ -127,7 +132,12 @@ function main() {
       return;
     }
     if (msg.k === MSG.MATCH_START) {
-      startMatch(new LiveTransport(ws));
+      // The last room-state broadcast still reflects everyone's final
+      // Team/Character picks (see room.js's LobbyManager — it broadcasts on
+      // every pick/ready before ever sending match-start), so this is the
+      // local player's picked kit id for the cosmetic-feedback gating below.
+      const me = latestState.players.find((p) => p.id === latestState.you);
+      startMatch(new LiveTransport(ws), me.character);
       return;
     }
   }
@@ -149,7 +159,13 @@ function main() {
 
     const me = state.players.find((p) => p.id === state.you);
     for (const btn of teamPickerEl.children) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.team === me.team));
+      const onThisTeam = btn.dataset.team === me.team;
+      btn.setAttribute("aria-pressed", String(onThisTeam));
+      // A Team the server would reject (room.js's MAX_TEAM_SIZE) is disabled
+      // here too, except the one `me` is already on — switching within your
+      // own (now-full) Team must stay a no-op, not a blocked action.
+      const teamCount = state.players.filter((p) => p.team === btn.dataset.team).length;
+      btn.disabled = !onThisTeam && teamCount >= MAX_TEAM_SIZE;
     }
     for (const btn of characterPickerEl.children) {
       btn.setAttribute("aria-pressed", String(btn.dataset.character === me.character));
@@ -223,10 +239,12 @@ function main() {
     send({ k: MSG.SET_READY, ready: !me.ready });
   });
 
-  function startMatch(transport) {
+  function startMatch(transport, myCharacter) {
     lobbyEl.hidden = true;
     canvas.hidden = false;
     hintEl.hidden = false;
+    solarEl.hidden = false;
+    hpHudEl.hidden = false;
     if (devPanelJumpBtn) devPanelJumpBtn.disabled = true;
 
     // Selects which Map to render — must match the server's MAP_ID env var
@@ -241,16 +259,44 @@ function main() {
     const tilemap = new Tilemap(map.cols, map.rows, TILE, TILE, buildMapData(map));
     tilemap.tint = 0x445566;
 
+    // Dev-only readout so hp (server-authoritative, never rendered on the
+    // sprite itself — see server.js's Character.hp comment) is actually
+    // visible while testing damage/death/respawn (#9): one colored dot +
+    // number per live CharacterView, dot tinted the same as the sprite.
+    function updateHpHud(client) {
+      const rows = [];
+      for (const entity of client.entities.values()) {
+        if (!(entity instanceof CharacterView)) continue;
+        const color = `#${entity.tint.toString(16).padStart(6, "0")}`;
+        rows.push(`<span style="color:${color}">●</span> ${entity.downed ? "downed" : entity.hp}`);
+      }
+      hpHudEl.innerHTML = rows.join("&nbsp;&nbsp;");
+    }
+
     // Views, entity factory, and the NetScene subclass live in match-view.js
-    // — this only wires them up with the map-specific tilemap/bounds and the
+    // — this only wires them up with the map-specific tilemap/bounds, the
     // prediction callback (which client.js needs a direct `tilemap`
     // reference for anyway, since it must run the SAME movement the server
-    // runs).
+    // runs), and the per-frame HUD update (match-view.js never touches the
+    // DOM itself — see its header comment). Skips prediction while downed
+    // (#9), mirroring the server's Character.fixedUpdate guard — otherwise
+    // the local (hidden) entity would keep drifting from replayed input
+    // during the respawn timer, dragging the camera (which follows this
+    // same entity) along with it.
     const scene = createWorldScene({
       transport,
       tilemap,
       worldBounds: { minX: 0, minY: 0, maxX: WORLD_W, maxY: WORLD_H },
-      simulate: (entity, input, dt) => stepCharacter(entity, input, dt, tilemap),
+      simulate: (entity, input, dt) => {
+        if (entity.downed) return;
+        stepCharacter(entity, input, dt, tilemap);
+      },
+      onLocalUpdate: (local, client) => {
+        // Solar HUD (see #10) — display-only, driven straight off the local
+        // Character's synced `solar` field (see CharacterView.applyNetState).
+        solarAmountEl.textContent = local.solar;
+        updateHpHud(client);
+      },
     });
 
     RenderGame.create(canvas, { fov: WORLD_W, tickRate: TICK_RATE }).then((game) => {
@@ -261,28 +307,32 @@ function main() {
     // Send input on change; prediction + sending happen each tick. `fire`
     // isn't predicted (see match-view.js's ProjectileView) — it's just
     // relayed to the server, which edge-triggers/cooldown-gates it (see
-    // projectiles.js's stepPrimaryAbility) the same way `jump` is
+    // abilities.js's stepPrimaryAbility) the same way `jump` is
     // edge-triggered locally.
-    const input = { left: false, right: false, jump: false, fire: false };
+    const input = { left: false, right: false, jump: false, fire: false, dash: false, buyUpgrade: null };
     // Tracks the last movement direction, mirroring server.js's
     // Character.facing purely locally — used only to place the muzzle flash
     // below on the correct side; the server derives its own copy the same
     // way from the same input, so this never needs to be synced.
     let localFacing = 1;
     // Real time (not tick-based — this fires from a DOM event, off the fixed
-    // step), mirroring PROJECTILE_COOLDOWN so the flash doesn't fire faster
-    // than the server would actually spawn a Projectile. This is a cosmetic
-    // gate only, not authoritative — the server still independently
-    // cooldown-gates the real shot.
+    // step), mirroring the local kit's own Primary Ability cooldown so the
+    // flash doesn't fire faster than the server would actually resolve the
+    // real Ability. This is a cosmetic gate only, not authoritative — the
+    // server still independently cooldown-gates the real Ability.
     let nextFlashReadyAt = 0;
+    // The ranged kit is Naut (see shared.js's CHARACTERS); any other pick
+    // (currently only the melee Brawler) gets the melee swing's cosmetic
+    // instead — branched once here rather than in every input handler below.
+    const isMelee = myCharacter !== CHARACTERS[0].id;
 
-    // Immediate, local-only feedback for a fire press: the real Projectile
-    // isn't predicted (see the comment above), so without this a press feels
-    // laggy — it's ~100ms+ (interpolation buffer + round trip) before
-    // anything appears. Not net-synced, so other players never see it; it
-    // exists purely to make pressing F feel responsive. Spawn math mirrors
-    // server.js's Character._firePrimary exactly, so the flash lines up with
-    // where the real Projectile will appear moments later.
+    // Immediate, local-only feedback for a fire press: neither kit's Primary
+    // Ability is predicted (see the comments on projectiles.js/melee.js), so
+    // without this a press feels laggy — it's ~100ms+ (interpolation buffer +
+    // round trip) before anything appears. Not net-synced, so other players
+    // never see it; it exists purely to make pressing F feel responsive.
+    // Spawn math mirrors server.js's KITS.fire exactly, so the flash lines up
+    // with where the real Projectile/swing will resolve moments later.
     function spawnMuzzleFlash(facing) {
       const local = scene.client.entities.get(scene.client.you);
       if (!local) return;
@@ -304,26 +354,63 @@ function main() {
       });
     }
 
+    // Melee counterpart to spawnMuzzleFlash: sized/positioned like
+    // melee.js's meleeHitbox rather than a Projectile, and tinted
+    // differently so the two kits read as visually distinct.
+    function spawnMeleeFlash(facing) {
+      const local = scene.client.entities.get(scene.client.you);
+      if (!local) return;
+      const flash = new Sprite();
+      flash.width = MELEE_RANGE;
+      flash.height = local.height + MELEE_HEIGHT_PAD * 2;
+      flash.tint = 0xffcc33;
+      flash.setPosition(
+        facing > 0 ? local.x + local.width : local.x - MELEE_RANGE,
+        local.y - MELEE_HEIGHT_PAD,
+      );
+      scene.add(flash);
+      scene.tween(flash, { scaleX: 1.4, scaleY: 1.1 }, 0.1, {
+        onComplete: () => flash.kill(),
+      });
+    }
+
     const KEYS = {
       ArrowLeft: "left", KeyA: "left",
       ArrowRight: "right", KeyD: "right",
       ArrowUp: "jump", KeyW: "jump", Space: "jump",
       KeyF: "fire",
+      ShiftLeft: "dash", ShiftRight: "dash",
     };
+    // Upgrade purchase requests (see #10) — a one-shot action like `fire`,
+    // not a held movement direction, so it's relayed as an id string rather
+    // than added to KEYS' boolean shape; the server edge-triggers it the
+    // same way (see server.js's Character.fixedUpdate).
+    const UPGRADE_KEYS = { KeyE: "damage", KeyR: "speed" };
     function setKey(e, down) {
       const dir = KEYS[e.code];
-      if (!dir || input[dir] === down) return;
-      input[dir] = down;
-      if (down && dir === "left") localFacing = -1;
-      if (down && dir === "right") localFacing = 1;
-      if (down && dir === "fire") {
-        const now = performance.now();
-        if (now >= nextFlashReadyAt) {
-          nextFlashReadyAt = now + PROJECTILE_COOLDOWN * 1000;
-          spawnMuzzleFlash(localFacing);
+      if (dir) {
+        if (input[dir] === down) return;
+        input[dir] = down;
+        if (down && dir === "left") localFacing = -1;
+        if (down && dir === "right") localFacing = 1;
+        if (down && dir === "fire") {
+          const now = performance.now();
+          if (now >= nextFlashReadyAt) {
+            nextFlashReadyAt = now + (isMelee ? MELEE_COOLDOWN : PROJECTILE_COOLDOWN) * 1000;
+            if (isMelee) spawnMeleeFlash(localFacing);
+            else spawnMuzzleFlash(localFacing);
+          }
         }
+        scene.client.setLocalInput(input); // predicted + sent automatically
+        e.preventDefault();
+        return;
       }
-      scene.client.setLocalInput(input); // predicted + sent automatically
+
+      const upgradeId = UPGRADE_KEYS[e.code];
+      if (!upgradeId) return;
+      if (down) input.buyUpgrade = upgradeId;
+      else if (input.buyUpgrade === upgradeId) input.buyUpgrade = null;
+      scene.client.setLocalInput(input);
       e.preventDefault();
     }
     window.addEventListener("keydown", (e) => setKey(e, true));

@@ -29,15 +29,43 @@ export const MAX_VEL_Y = 360;
 export const GRAVITY = 900;
 export const JUMP_VELOCITY = 340;
 
+// Secondary Ability: dash. Predicted client-side (see NetClient.predict /
+// _reconcileLocal) and reconciled the same way base movement is — unlike the
+// Primary Ability projectile (server-only, see projectiles.js), so its state
+// (facing/dashCooldown/dashTimer/_prevDash) lives on the Character itself and
+// is driven from stepCharacter below, the one function both sides call.
+export const DASH_SPEED = 320; // px/s, well above MAX_VEL_X
+export const DASH_DURATION = 0.15; // seconds the burst lasts
+export const DASH_COOLDOWN = 1.5; // seconds between dashes
+
 export const SPAWN_Y = TILE * 2;
 
+// Character HP — server-authoritative only; not predicted or netState'd,
+// same as Minion/Tower/Base hp, since no Ability that damages a Character
+// (melee.js's swing) is client-predicted either. A Character reaching 0 here
+// is downed and timer-respawned at its own Team's Base — see respawn.js.
+export const CHAR_HP = 100;
+
 // Lobby: the two Teams a player can join, and the Character roster a player
-// can pick from. Only one Character exists so far (from #1); later slices
-// (#8) add entries here without changing the lobby/select flow's shape.
-// Bases in maps.js use these same "A"/"B" ids for their `team` field.
+// can pick from. Bases in maps.js use these same "A"/"B" ids for their
+// `team` field. Each entry's `id` also keys server.js's KITS lookup, which
+// maps it to that Character's Primary Ability (see projectiles.js's ranged
+// Projectile and melee.js's melee swing) — the two kits share the same dash
+// Secondary Ability (stepCharacter above) and the same generic
+// cooldown/edge-trigger Primary Ability step (abilities.js's
+// stepPrimaryAbility), differing only in cooldown length and fire effect.
 export const TEAMS = ["A", "B"];
 export const TEAM_COLORS = { A: 0xe8543e, B: 0x3ea1e8 };
-export const CHARACTERS = [{ id: "naut", name: "Naut" }];
+
+// 3v3, matching Awesomenauts (see CONTEXT.md's Team glossary) — the lobby's
+// per-Team and per-Room caps (room.js's LobbyManager) and the client's Team
+// picker (client.js) both read these rather than hardcoding 3/6.
+export const MAX_TEAM_SIZE = 3;
+export const MAX_ROOM_SIZE = MAX_TEAM_SIZE * TEAMS.length;
+export const CHARACTERS = [
+  { id: "naut", name: "Naut" },
+  { id: "brawler", name: "Brawler" },
+];
 
 function isGrounded(entity, tilemap) {
   const footY = entity.y + entity.height + 1;
@@ -49,22 +77,58 @@ function isGrounded(entity, tilemap) {
 
 /**
  * Advance a Character one fixed step: run + gravity + edge-triggered jump +
- * tilemap collision. Called identically by the server's authoritative
- * `fixedUpdate` and the client's prediction/reconciliation `simulate` — must
- * stay a pure function of (entity, input, dt, tilemap) so both sides agree.
+ * dash (Secondary Ability) + tilemap collision. Called identically by the
+ * server's authoritative `fixedUpdate` and the client's
+ * prediction/reconciliation `simulate` — must stay a pure function of
+ * (entity, input, dt, tilemap) so both sides agree.
  *
  * Uses `Entity.prototype.fixedUpdate` directly (not `entity.fixedUpdate()`)
  * so it integrates via the base accel→drag→clamp→position step regardless of
  * whether `entity` is a subclass that overrides `fixedUpdate` to call this.
  */
 export function stepCharacter(entity, input, dt, tilemap) {
-  entity.acceleration.x = 0;
-  if (input.left) entity.acceleration.x -= RUN_ACCEL;
-  if (input.right) entity.acceleration.x += RUN_ACCEL;
-  entity.acceleration.y = GRAVITY;
+  // Last non-neutral horizontal input direction. Read by the Primary Ability
+  // (projectiles.js's stepPrimaryAbility, called after this) and by dash
+  // below — tracked once here rather than in both places.
+  if (input.left) entity.facing = -1;
+  else if (input.right) entity.facing = 1;
 
-  if (input.jump && !entity._prevJump && entity._grounded) {
-    entity.velocity.y = -JUMP_VELOCITY;
+  if (entity.dashCooldown > 0) entity.dashCooldown -= dt;
+
+  const dashRequested = !!input.dash && !entity._prevDash;
+  entity._prevDash = !!input.dash;
+  if (dashRequested && entity.dashTimer <= 0 && entity.dashCooldown <= 0) {
+    entity.dashTimer = DASH_DURATION;
+    entity.dashCooldown = DASH_COOLDOWN;
+  }
+
+  if (entity.dashTimer > 0) {
+    entity.dashTimer -= dt;
+    // Overrides normal run/gravity for the burst: zero drag/gravity and a
+    // temporarily raised maxVelocity so the burst speed isn't immediately
+    // clamped back down to MAX_VEL_X by Entity's own integration (accel ->
+    // drag -> maxVelocity clamp -> position, see CLAUDE.md's engine summary).
+    entity.acceleration.x = 0;
+    entity.acceleration.y = 0;
+    entity.drag.x = 0;
+    entity.maxVelocity.x = DASH_SPEED;
+    entity.velocity.set(entity.facing * DASH_SPEED, 0);
+  } else {
+    entity.drag.x = DRAG_X;
+    // Scaled by a bought speed Upgrade (see solar.js's UPGRADES), defaulting
+    // to 1 for entities that never carry the field (e.g. this file's own
+    // tests) — must apply here, not just once at purchase time, since
+    // Entity's own accel->drag->maxVelocity clamp step re-reads
+    // maxVelocity.x every tick.
+    entity.maxVelocity.x = MAX_VEL_X * (entity.speedMultiplier ?? 1);
+    entity.acceleration.x = 0;
+    if (input.left) entity.acceleration.x -= RUN_ACCEL;
+    if (input.right) entity.acceleration.x += RUN_ACCEL;
+    entity.acceleration.y = GRAVITY;
+
+    if (input.jump && !entity._prevJump && entity._grounded) {
+      entity.velocity.y = -JUMP_VELOCITY;
+    }
   }
   entity._prevJump = !!input.jump;
 

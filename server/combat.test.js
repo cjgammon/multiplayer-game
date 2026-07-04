@@ -4,7 +4,8 @@ import { Minion, MINION_DAMAGE } from "../shared/minions.js";
 import { Tower, Base, TOWER_HP, BASE_HP } from "./structures.js";
 import { PROJECTILE_DAMAGE } from "../shared/projectiles.js";
 import { Projectile } from "./projectiles.js";
-import { resolveStructureCombat, resolveProjectileHit } from "./combat.js";
+import { MELEE_DAMAGE } from "../shared/melee.js";
+import { resolveStructureCombat, resolveProjectileHit, resolveMeleeHit } from "./combat.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 
@@ -85,7 +86,7 @@ describe("resolveProjectileHit", () => {
     const result = resolveProjectileHit(p, target);
     expect(target.hp).toBe(hpBefore - PROJECTILE_DAMAGE);
     expect(result.hit).toBe(true);
-    expect(result.isMinion).toBe(true);
+    expect(result.targetKind).toBe("minion");
     expect(p.spent).toBe(true);
   });
 
@@ -95,7 +96,15 @@ describe("resolveProjectileHit", () => {
     tower.hp = PROJECTILE_DAMAGE;
     const result = resolveProjectileHit(p, tower);
     expect(result.destroyed).toBe(true);
-    expect(result.isMinion).toBe(false);
+    expect(result.targetKind).toBe("tower");
+  });
+
+  test("classifies a downed enemy Character target as \"character\"", () => {
+    const p = projectile(TEAM_A);
+    const target = { team: TEAM_B, hp: PROJECTILE_DAMAGE, character: "naut" };
+    const result = resolveProjectileHit(p, target);
+    expect(result.destroyed).toBe(true);
+    expect(result.targetKind).toBe("character");
   });
 
   test("an already-spent Projectile can't hit anything else", () => {
@@ -113,5 +122,51 @@ describe("resolveProjectileHit", () => {
     const result = resolveProjectileHit(p, target);
     expect(result.hit).toBe(false);
     expect(p.spent).toBe(false);
+  });
+});
+
+describe("resolveMeleeHit", () => {
+  function attacker(team) {
+    return { team, x: 0, y: 0, width: 14, height: 20, facing: 1, character: "brawler" };
+  }
+
+  test("a melee swing hitting an enemy Minion damages it and reports the hit", () => {
+    const a = attacker(TEAM_A);
+    const target = minion(TEAM_B, 0);
+    const hpBefore = target.hp;
+    const result = resolveMeleeHit(a, target);
+    expect(target.hp).toBe(hpBefore - MELEE_DAMAGE);
+    expect(result.hit).toBe(true);
+    expect(result.targetKind).toBe("minion");
+  });
+
+  test("reports destroyed once the target's hp drops to or below zero", () => {
+    const a = attacker(TEAM_A);
+    const tower = new Tower(0, 0, 32, 32, 0);
+    tower.hp = MELEE_DAMAGE;
+    const result = resolveMeleeHit(a, tower);
+    expect(result.destroyed).toBe(true);
+    expect(result.targetKind).toBe("tower");
+  });
+
+  test("classifies a downed enemy Character target as \"character\"", () => {
+    const a = attacker(TEAM_A);
+    const target = { team: TEAM_B, hp: MELEE_DAMAGE, character: "naut" };
+    const result = resolveMeleeHit(a, target);
+    expect(result.destroyed).toBe(true);
+    expect(result.targetKind).toBe("character");
+  });
+
+  test("a swing can't hit its own Team's Minion", () => {
+    const a = attacker(TEAM_A);
+    const target = minion(TEAM_A, 0);
+    const result = resolveMeleeHit(a, target);
+    expect(result.hit).toBe(false);
+  });
+
+  test("a swing can't hit the attacker itself", () => {
+    const a = attacker(TEAM_A);
+    const result = resolveMeleeHit(a, a);
+    expect(result.hit).toBe(false);
   });
 });

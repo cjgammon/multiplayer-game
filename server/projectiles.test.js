@@ -2,10 +2,10 @@ import { describe, test, expect } from "vitest";
 import { TEAMS } from "../shared/shared.js";
 import { Minion, MINION_HP } from "../shared/minions.js";
 import {
-  PROJECTILE_SPEED, PROJECTILE_DAMAGE, PROJECTILE_COOLDOWN, PROJECTILE_LIFETIME,
+  PROJECTILE_SPEED, PROJECTILE_DAMAGE, PROJECTILE_LIFETIME,
 } from "../shared/projectiles.js";
 import { Tower } from "./structures.js";
-import { Projectile, stepPrimaryAbility, canHit, applyProjectileDamage } from "./projectiles.js";
+import { Projectile, canHit, applyProjectileDamage } from "./projectiles.js";
 
 const [TEAM_A, TEAM_B] = TEAMS;
 
@@ -43,6 +43,13 @@ describe("Projectile movement", () => {
     expect(p.spent).toBe(false);
   });
 
+  test("defaults damageMultiplier to 1, or captures the one passed at spawn time", () => {
+    const p = new Projectile(0, 0, TEAM_A, 1, stubDirector());
+    expect(p.damageMultiplier).toBe(1);
+    const boosted = new Projectile(0, 0, TEAM_A, 1, stubDirector(), 1.5);
+    expect(boosted.damageMultiplier).toBe(1.5);
+  });
+
   test("asks its director to resolve a hit after moving, unless already spent", () => {
     const calls = [];
     const director = { resolveProjectileHit: (p) => calls.push(p) };
@@ -53,59 +60,6 @@ describe("Projectile movement", () => {
     p.spent = true;
     p.fixedUpdate(1);
     expect(calls).toEqual([p]); // no second call once spent
-  });
-});
-
-describe("stepPrimaryAbility", () => {
-  function character() {
-    return { primaryCooldown: 0, facing: 1 };
-  }
-
-  test("requests a shot on the fire key's rising edge when off cooldown", () => {
-    const c = character();
-    expect(stepPrimaryAbility(c, { fire: true }, 1)).toBe(true);
-    expect(c.primaryCooldown).toBe(PROJECTILE_COOLDOWN);
-  });
-
-  test("does not fire when the fire key isn't pressed", () => {
-    const c = character();
-    expect(stepPrimaryAbility(c, { fire: false }, 1)).toBe(false);
-  });
-
-  test("does not spam-fire while the key is held", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    const fired = stepPrimaryAbility(c, { fire: true }, 0.01);
-    expect(fired).toBe(false);
-  });
-
-  test("re-fires on a fresh press once the cooldown has elapsed", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    stepPrimaryAbility(c, { fire: false }, PROJECTILE_COOLDOWN); // release; cooldown elapses
-    expect(stepPrimaryAbility(c, { fire: true }, 0)).toBe(true);
-  });
-
-  test("cannot fire again before the cooldown elapses even on a fresh press", () => {
-    const c = character();
-    stepPrimaryAbility(c, { fire: true }, 1);
-    stepPrimaryAbility(c, { fire: false }, 0.01); // release; cooldown still active
-    expect(stepPrimaryAbility(c, { fire: true }, 0)).toBe(false);
-  });
-
-  test("tracks facing from the latest movement input", () => {
-    const c = character();
-    stepPrimaryAbility(c, { left: true }, 0);
-    expect(c.facing).toBe(-1);
-    stepPrimaryAbility(c, { right: true }, 0);
-    expect(c.facing).toBe(1);
-  });
-
-  test("keeps the last facing when neither left nor right is held", () => {
-    const c = character();
-    stepPrimaryAbility(c, { left: true }, 0);
-    stepPrimaryAbility(c, {}, 0);
-    expect(c.facing).toBe(-1);
   });
 });
 
@@ -142,8 +96,23 @@ describe("canHit", () => {
     expect(canHit(projectile(TEAM_A), tower)).toBe(false);
   });
 
-  test("non-Minion, non-Tower entities are never hit", () => {
+  test("non-Minion, non-Tower, non-Character entities are never hit", () => {
     expect(canHit(projectile(TEAM_A), { hp: 10 })).toBe(false);
+  });
+
+  test("can hit an enemy Character", () => {
+    const target = { team: TEAM_B, hp: 100, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(true);
+  });
+
+  test("cannot hit a same-team Character", () => {
+    const target = { team: TEAM_A, hp: 100, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(false);
+  });
+
+  test("cannot hit a downed Character (hp already <= 0)", () => {
+    const target = { team: TEAM_B, hp: 0, character: "naut" };
+    expect(canHit(projectile(TEAM_A), target)).toBe(false);
   });
 });
 
@@ -161,5 +130,12 @@ describe("applyProjectileDamage", () => {
     const { destroyed } = applyProjectileDamage({}, tower);
     expect(tower.hp).toBeLessThanOrEqual(0);
     expect(destroyed).toBe(true);
+  });
+
+  test("scales damage by the firing Character's damage Upgrade multiplier, captured at spawn time", () => {
+    const m = new Minion(0, 0, TEAM_B, 0, [], 0xffffff);
+    const { destroyed } = applyProjectileDamage({ damageMultiplier: 2 }, m);
+    expect(m.hp).toBe(MINION_HP - PROJECTILE_DAMAGE * 2);
+    expect(destroyed).toBe(false);
   });
 });

@@ -28,6 +28,21 @@ export const CHARACTER_STATE = [
   { wireKey: "color", serverProp: "color", clientProp: "tint" },
   { wireKey: "grounded", serverProp: "_grounded", clientProp: "_grounded" },
   { wireKey: "prevJump", serverProp: "_prevJump", clientProp: "_prevJump" },
+  { wireKey: "facing", serverProp: "facing", clientProp: "facing" },
+  { wireKey: "prevDash", serverProp: "_prevDash", clientProp: "_prevDash" },
+  { wireKey: "dashCooldown", serverProp: "dashCooldown", clientProp: "dashCooldown" },
+  { wireKey: "dashTimer", serverProp: "dashTimer", clientProp: "dashTimer" },
+  { wireKey: "speedMultiplier", serverProp: "speedMultiplier", clientProp: "speedMultiplier" },
+  { wireKey: "solar", serverProp: "solar", clientProp: "solar" },
+  { wireKey: "hp", serverProp: "hp", clientProp: "hp" },
+  // Downed (#9): two client fields from one wire field — `downed` itself
+  // (read by the `simulate` callback to skip predicting a downed local
+  // player) plus `visible`, derived via transform, so a downed Character is
+  // hidden rather than despawned (see respawn.js's header comment on why the
+  // server keeps simulating/networking the same entity through its respawn
+  // timer instead of a real net.spawn/despawn round-trip).
+  { wireKey: "downed", serverProp: "downed", clientProp: "downed" },
+  { wireKey: "downed", serverProp: "downed", clientProp: "visible", transform: (downed) => !downed },
 ];
 
 export const MINION_STATE = [
@@ -46,6 +61,12 @@ export const BASE_STATE = [
 export const PROJECTILE_STATE = [
   { wireKey: "team", serverProp: "team", clientProp: "tint", transform: (team) => TEAM_COLORS[team] },
 ];
+
+// SolarPickupView renders a fixed gold tint and reads nothing dynamic — see
+// shared/solar.js's SolarPickup.netState() — so, like Tower, there's nothing
+// here to pick or apply. `amount` is used only server-side (crediting the
+// collecting Character) and never crosses the wire.
+export const SOLAR_STATE = [];
 
 /** Server side: builds the netState payload for `entity` from its mapping. */
 export function pickNetState(entity, mapping) {
